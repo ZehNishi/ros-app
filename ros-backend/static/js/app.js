@@ -89,11 +89,12 @@ class ROSStatus {
   }
 
   start() {
+    this.stop();                                            // evita intervalo duplo
     this._check();
     this._timer = setInterval(() => this._check(), ROS_POLL_INTERVAL);
   }
 
-  stop() { clearInterval(this._timer); }
+  stop() { clearInterval(this._timer); this._timer = null; }
 
   async _check() {
     try {
@@ -114,7 +115,18 @@ class ROSStatus {
         if (body.status === 'ok' || body.ros_ok === true) {
           this._set('connected', 'ROS Conectado');
         } else {
-          this._set('degraded', body.detail || 'ROS Degradado');
+          // roscore caiu após a inicialização — redireciona para config uma
+          // única vez (na transição), mas mantém o polling ativo para detectar
+          // quando o servidor Python for reiniciado.
+          const wasOk = this._state === 'connected';
+          this._set('degraded', 'ROS Offline');
+          if (wasOk) {
+            this._toast.show(
+              'O roscore ficou offline. Reinicie o servidor Python e clique em Conectar.',
+              'error'
+            );
+            App.showTab('config');
+          }
         }
       } else {
         this._set('degraded', body.detail || 'ROS Degradado');

@@ -12,15 +12,19 @@ Toda a lógica ROS fica em app/ros/.
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.ros.ros_client import ROSUnavailableError, ROSNotInitializedError, ros_client
 from app.ros.topic_manager import topic_manager
+
+_STATIC_DIR = Path(__file__).parent.parent / "static"
 
 logger = get_logger(__name__)
 
@@ -140,3 +144,28 @@ async def ros_not_initialized_handler(request: Request, exc: ROSNotInitializedEr
 # ---------------------------------------------------------------------------
 
 app.include_router(api_router, prefix="/api/v1")
+
+
+# ---------------------------------------------------------------------------
+# Rota raiz → dashboard
+# ---------------------------------------------------------------------------
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    """Redireciona / para o dashboard de visualização em tempo real."""
+    return RedirectResponse(url="/ui/dashboard.html")
+
+
+# ---------------------------------------------------------------------------
+# Arquivos estáticos — montado POR ÚLTIMO para não sombrear rotas da API
+# ---------------------------------------------------------------------------
+
+if _STATIC_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
+    logger.info("Arquivos estáticos montados em /ui (dir: %s).", _STATIC_DIR)
+else:
+    logger.warning(
+        "Diretório de arquivos estáticos não encontrado: %s. "
+        "O dashboard não estará disponível.",
+        _STATIC_DIR,
+    )

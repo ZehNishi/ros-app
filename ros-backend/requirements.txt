@@ -23,3 +23,6 @@ pydantic>=2.7.0
 # Visualização
 matplotlib>=3.8.0
 numpy>=1.24.0
+
+# Arquivos estáticos (StaticFiles do FastAPI)
+aiofiles>=23.0.0

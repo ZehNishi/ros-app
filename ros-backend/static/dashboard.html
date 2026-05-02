@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ROS Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --border:    #2a2d3e;
+      --text:      #e2e8f0;
+      --muted:     #64748b;
+      --accent:    #3b82f6;
+      --green:     #22c55e;
+      --yellow:    #f59e0b;
+      --red:       #ef4444;
+      --chart-line:#60a5fa;
+      --radius:    8px;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ──────────────────────────────────────── */
+    header {
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: .3px; }
+    header span { font-size: .75rem; color: var(--muted); }
+
+    /* ── Layout ──────────────────────────────────────── */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 0;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────── */
+    aside {
+      padding: 20px 16px;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .field-group { display: flex; flex-direction: column; gap: 6px; }
+    label { font-size: .78rem; color: var(--muted); font-weight: 500; }
+
+    input[type="text"], input[type="number"] {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 8px 10px;
+      font-size: .85rem;
+      width: 100%;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input:focus { border-color: var(--accent); }
+
+    .hint { font-size: .72rem; color: var(--muted); margin-top: 2px; }
+
+    .btn {
+      padding: 9px 0;
+      border-radius: var(--radius);
+      border: none;
+      font-size: .85rem;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: opacity .15s, filter .15s;
+    }
+    .btn:hover { filter: brightness(1.12); }
+    .btn:active { opacity: .85; }
+    .btn-primary  { background: var(--accent); color: #fff; }
+    .btn-danger   { background: var(--red);    color: #fff; }
+    .btn-disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+
+    /* ── Status badge ────────────────────────────────── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      background: var(--bg);
+      border: 1px solid var(--border);
+    }
+    .status-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.connected    { background: var(--green);  box-shadow: 0 0 6px var(--green); }
+    .status-dot.reconnecting { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
+    .status-dot.disconnected { background: var(--muted);  }
+    .status-dot.error        { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+    .status-text { font-size: .78rem; }
+
+    /* ── Stats pills ─────────────────────────────────── */
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .stat {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      text-align: center;
+    }
+    .stat-value { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
+    .stat-label { font-size: .7rem; color: var(--muted); margin-top: 2px; }
+
+    /* ── Log ─────────────────────────────────────────── */
+    .log-title { font-size: .78rem; color: var(--muted); font-weight: 500; }
+    #log {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      font-size: .72rem;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      height: 140px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      color: var(--muted);
+    }
+    .log-entry { line-height: 1.5; }
+    .log-entry.info  { color: var(--text); }
+    .log-entry.ok    { color: var(--green); }
+    .log-entry.warn  { color: var(--yellow); }
+    .log-entry.err   { color: var(--red); }
+
+    /* ── Chart area ──────────────────────────────────── */
+    .chart-wrap {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-height: 0;
+    }
+    .chart-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+    }
+    .chart-title  { font-size: .95rem; font-weight: 600; }
+    .chart-subtitle { font-size: .75rem; color: var(--muted); }
+    .chart-actions { display: flex; gap: 8px; }
+    .btn-sm {
+      padding: 5px 12px;
+      font-size: .75rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .btn-sm:hover { border-color: var(--accent); color: var(--text); }
+
+    .canvas-container {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      min-height: 320px;
+      position: relative;
+    }
+    canvas { width: 100% !important; }
+
+    .empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: var(--muted);
+    }
+    .empty-state svg { opacity: .3; }
+    .empty-state p { font-size: .85rem; }
+
+    /* ── Scrollbar ───────────────────────────────────── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2">
+    <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+  </svg>
+  <h1>ROS Live Dashboard</h1>
+  <span>SSE · Chart.js</span>
+</header>
+
+<main>
+  <!-- ── Sidebar ── -->
+  <aside>
+    <div class="field-group">
+      <label for="inp-topic">Tópico ROS</label>
+      <input id="inp-topic" type="text" value="/chatter" placeholder="/chatter" />
+      <span class="hint">Deve estar subscrito via POST /subscribe</span>
+    </div>
+
+    <div class="field-group">
+      <label for="inp-field">Campo</label>
+      <input id="inp-field" type="text" value="data" placeholder="data" />
+      <span class="hint">Notação de ponto: linear_acceleration.x</span>
+    </div>
+
+    <div class="field-group">
+      <label for="inp-interval">Intervalo (s)</label>
+      <input id="inp-interval" type="number" value="0.1" min="0.01" max="60" step="0.05" />
+    </div>
+
+    <div class="field-group">
+      <label for="inp-maxpts">Máx. pontos</label>
+      <input id="inp-maxpts" type="number" value="200" min="10" max="2000" step="10" />
+    </div>
+
+    <button id="btn-connect" class="btn btn-primary" onclick="toggleConnect()">Conectar</button>
+
+    <!-- Status -->
+    <div class="status-row">
+      <div id="status-dot" class="status-dot disconnected"></div>
+      <span id="status-text" class="status-text">Desconectado</span>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value" id="stat-total">0</div>
+        <div class="stat-label">eventos</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="stat-hz">—</div>
+        <div class="stat-label">msg/s</div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <span class="log-title">Log</span>
+    <div id="log"></div>
+  </aside>
+
+  <!-- ── Chart ── -->
+  <div class="chart-wrap">
+    <div class="chart-header">
+      <div>
+        <div class="chart-title" id="chart-title">Aguardando conexão…</div>
+        <div class="chart-subtitle" id="chart-subtitle">Configure o tópico e clique em Conectar</div>
+      </div>
+      <div class="chart-actions">
+        <button class="btn-sm" onclick="clearChart()">Limpar</button>
+        <button class="btn-sm" onclick="downloadPNG()">Exportar PNG</button>
+      </div>
+    </div>
+
+    <div class="canvas-container">
+      <div class="empty-state" id="empty-state">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="1.5">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        <p>Nenhum dado ainda</p>
+      </div>
+      <canvas id="chart" style="display:none"></canvas>
+    </div>
+  </div>
+</main>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// Estado global
+// ─────────────────────────────────────────────────────────────────────────────
+let evtSource     = null;
+let chart         = null;
+let connected     = false;
+let totalEvents   = 0;
+let reconnectTimer = null;
+let reconnectDelay = 1000;   // ms, com backoff exponencial
+let hzBuffer      = [];      // timestamps para calcular Hz
+let hzTimer       = null;
+
+const MAX_RECONNECT_DELAY = 30_000;
+const HZ_WINDOW_SEC       = 3;     // janela de cálculo de msg/s
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+function getField(obj, path) {
+  return path.split('.').reduce((cur, k) => (cur != null ? cur[k] : undefined), obj);
+}
+
+function toNumber(val) {
+  if (val == null) return null;
+  if (Array.isArray(val)) {
+    const nums = val.filter(v => typeof v === 'number');
+    return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+  }
+  const n = Number(val);
+  return isNaN(n) ? null : n;
+}
+
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('pt-BR', { hour12: false }) +
+         '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Log
+// ─────────────────────────────────────────────────────────────────────────────
+function log(msg, level = 'info') {
+  const el = document.getElementById('log');
+  const e  = document.createElement('div');
+  e.className = `log-entry ${level}`;
+  const now = new Date().toLocaleTimeString('pt-BR', { hour12: false });
+  e.textContent = `[${now}] ${msg}`;
+  el.appendChild(e);
+  // Mantém no máximo 80 linhas
+  while (el.children.length > 80) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status
+// ─────────────────────────────────────────────────────────────────────────────
+function setStatus(state, text) {
+  const dot  = document.getElementById('status-dot');
+  const span = document.getElementById('status-text');
+  dot.className = `status-dot ${state}`;
+  span.textContent = text;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chart.js
+// ─────────────────────────────────────────────────────────────────────────────
+function initChart() {
+  const ctx = document.getElementById('chart').getContext('2d');
+  if (chart) { chart.destroy(); }
+
+  chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels:   [],
+      datasets: [{
+        label:            document.getElementById('inp-field').value,
+        data:             [],
+        borderColor:      '#60a5fa',
+        backgroundColor:  'rgba(96,165,250,0.08)',
+        borderWidth:      1.5,
+        pointRadius:      0,
+        pointHoverRadius: 4,
+        tension:          0.2,
+        fill:             true,
+      }]
+    },
+    options: {
+      responsive:          true,
+      maintainAspectRatio: false,
+      animation:           false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1a1d27',
+          borderColor:     '#2a2d3e',
+          borderWidth:     1,
+          titleColor:      '#94a3b8',
+          bodyColor:       '#e2e8f0',
+          callbacks: {
+            title: items => items[0].label,
+            label: item  => ` ${item.formattedValue}`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#64748b', font: { size: 11 }, maxTicksLimit: 8, maxRotation: 0 },
+          grid:  { color: '#1e2130' },
+        },
+        y: {
+          ticks: { color: '#64748b', font: { size: 11 } },
+          grid:  { color: '#1e2130' },
+        }
+      }
+    }
+  });
+
+  document.getElementById('chart').style.display = 'block';
+  document.getElementById('empty-state').style.display = 'none';
+}
+
+function pushPoint(label, value) {
+  if (!chart) return;
+  const maxPts = parseInt(document.getElementById('inp-maxpts').value) || 200;
+  const ds = chart.data.datasets[0];
+
+  chart.data.labels.push(label);
+  ds.data.push(value);
+
+  if (chart.data.labels.length > maxPts) {
+    chart.data.labels.shift();
+    ds.data.shift();
+  }
+  chart.update('none'); // sem animação — mais rápido
+}
+
+function clearChart() {
+  if (!chart) return;
+  chart.data.labels   = [];
+  chart.data.datasets[0].data = [];
+  chart.update('none');
+  log('Gráfico limpo.', 'info');
+}
+
+function downloadPNG() {
+  if (!chart) return;
+  const a    = document.createElement('a');
+  a.href     = chart.toBase64Image('image/png', 1);
+  const ts   = new Date().toISOString().replace(/[:.]/g, '-');
+  a.download = `ros-${document.getElementById('inp-topic').value.replace('/', '')}-${ts}.png`;
+  a.click();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hz calculation
+// ─────────────────────────────────────────────────────────────────────────────
+function recordHz() {
+  const now = Date.now();
+  hzBuffer.push(now);
+  // descarta entradas mais antigas que a janela
+  const cutoff = now - HZ_WINDOW_SEC * 1000;
+  while (hzBuffer.length && hzBuffer[0] < cutoff) hzBuffer.shift();
+}
+
+function updateHzDisplay() {
+  const hz = hzBuffer.length / HZ_WINDOW_SEC;
+  document.getElementById('stat-hz').textContent =
+    hz > 0 ? hz.toFixed(1) : '—';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSE connection
+// ─────────────────────────────────────────────────────────────────────────────
+function buildUrl() {
+  const topic    = document.getElementById('inp-topic').value.trim();
+  const name     = topic.startsWith('/') ? topic.slice(1) : topic;
+  const interval = parseFloat(document.getElementById('inp-interval').value) || 0.1;
+  return `/api/v1/topic/${name}/stream?interval=${interval}`;
+}
+
+function connect() {
+  if (evtSource) evtSource.close();
+
+  const url   = buildUrl();
+  const topic = document.getElementById('inp-topic').value.trim();
+  const field = document.getElementById('inp-field').value.trim();
+
+  log(`Conectando a ${topic} (campo: ${field})…`);
+  setStatus('reconnecting', 'Conectando…');
+  updateChartMeta(topic, field);
+  initChart();
+  chart.data.datasets[0].label = field;
+
+  evtSource = new EventSource(url);
+
+  evtSource.addEventListener('message', (e) => {
+    try {
+      const { timestamp, data } = JSON.parse(e.data);
+      const raw = getField(data, field);
+      const val = toNumber(raw);
+      if (val === null) {
+        log(`Campo '${field}' ausente ou não numérico.`, 'warn');
+        return;
+      }
+
+      pushPoint(fmtTime(timestamp), val);
+      recordHz();
+      totalEvents++;
+      document.getElementById('stat-total').textContent = totalEvents;
+
+    } catch (err) {
+      log(`Erro ao parsear evento: ${err.message}`, 'err');
+    }
+  });
+
+  evtSource.addEventListener('error', (e) => {
+    try {
+      const body = JSON.parse(e.data || '{}');
+      log(`Erro SSE: ${body.error ?? 'desconhecido'} (${body.code ?? ''})`, 'err');
+    } catch (_) {
+      // evento de erro do browser (sem data) — trata como queda de conexão
+    }
+  });
+
+  evtSource.onopen = () => {
+    connected = true;
+    reconnectDelay = 1000;
+    clearTimeout(reconnectTimer);
+    setStatus('connected', 'Conectado');
+    log(`Conectado a ${topic}.`, 'ok');
+
+    hzTimer = setInterval(updateHzDisplay, 1000);
+  };
+
+  evtSource.onerror = () => {
+    if (!connected) return; // já tratado pelo fluxo de reconexão
+    connected = false;
+    clearInterval(hzTimer);
+    document.getElementById('stat-hz').textContent = '—';
+    evtSource.close();
+    evtSource = null;
+
+    setStatus('reconnecting', `Reconectando em ${(reconnectDelay / 1000).toFixed(0)}s…`);
+    log(`Conexão perdida. Reconectando em ${(reconnectDelay / 1000).toFixed(0)}s…`, 'warn');
+
+    reconnectTimer = setTimeout(() => {
+      if (!connected) connect();
+    }, reconnectDelay);
+
+    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+  };
+}
+
+function disconnect() {
+  clearTimeout(reconnectTimer);
+  clearInterval(hzTimer);
+  if (evtSource) { evtSource.close(); evtSource = null; }
+  connected = false;
+  reconnectDelay = 1000;
+  setStatus('disconnected', 'Desconectado');
+  document.getElementById('stat-hz').textContent = '—';
+  log('Desconectado manualmente.');
+  updateBtn(false);
+}
+
+function toggleConnect() {
+  if (connected || evtSource) {
+    disconnect();
+  } else {
+    connect();
+    updateBtn(true);
+  }
+}
+
+function updateBtn(connecting) {
+  const btn = document.getElementById('btn-connect');
+  if (connecting) {
+    btn.textContent  = 'Desconectar';
+    btn.className    = 'btn btn-danger';
+  } else {
+    btn.textContent  = 'Conectar';
+    btn.className    = 'btn btn-primary';
+  }
+}
+
+function updateChartMeta(topic, field) {
+  document.getElementById('chart-title').textContent    = topic;
+  document.getElementById('chart-subtitle').textContent = `campo: ${field}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reconectar ao mudar tópico/campo enquanto conectado
+// ─────────────────────────────────────────────────────────────────────────────
+['inp-topic', 'inp-field'].forEach(id => {
+  document.getElementById(id).addEventListener('change', () => {
+    if (connected || evtSource) {
+      disconnect();
+      setTimeout(() => { connect(); updateBtn(true); }, 100);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enter para conectar
+// ─────────────────────────────────────────────────────────────────────────────
+document.querySelectorAll('input').forEach(inp => {
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') toggleConnect();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Init
+// ─────────────────────────────────────────────────────────────────────────────
+log('Dashboard pronto. Preencha os campos e clique em Conectar.');
+</script>
+</body>
+</html>

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     ROS_MASTER_URI: str = "http://localhost:11311"
     ROS_NODE_NAME: str = "fastapi_ros_node"
 
+    # Tamanho máximo do buffer histórico por tópico (número de mensagens).
+    # Sobrescreva via TOPIC_BUFFER_SIZE no .env.
+    TOPIC_BUFFER_SIZE: int = 1000
+
     # --- Sistema de arquivos ---
     # Diretório raiz permitido para leitura/escrita de arquivos.
     # Sobrescreva via variável de ambiente FILES_BASE_PATH ou no .env.

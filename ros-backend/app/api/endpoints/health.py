@@ -90,13 +90,24 @@ def ros_health():
 def connect_ros(req: ConnectRequest):
     """
     Inicializa o cliente ROS com Master URI local ou remoto.
-    Se já estiver inicializado, retorna erro (rospy não suporta re-inicialização dinâmica).
+
+    Comportamentos quando já inicializado:
+    - ``_initialized=True`` e ``is_ready=True``  → retorna sucesso (idempotente).
+    - ``_initialized=True`` e ``is_ready=False`` → roscore ficou offline;
+      rospy não suporta re-inicialização — orienta reinício do servidor.
     """
     if ros_client._initialized:
-        raise HTTPException(
-            status_code=400, 
-            detail="ROS já está inicializado. Reinicie a aplicação para alterar o Master URI."
-        )
+        if ros_client.is_ready:
+            logger.info("POST /connect: ROS já inicializado e ativo — retornando sucesso.")
+            return {"status": "ok", "message": "ROS já estava conectado e ativo."}
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "O roscore ficou offline após a inicialização. "
+                    "Reinicie o servidor Python (ros-backend) e tente conectar novamente."
+                ),
+            )
 
     if req.mode == "wifi" and req.master_uri:
         os.environ["ROS_MASTER_URI"] = req.master_uri

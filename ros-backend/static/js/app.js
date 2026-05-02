@@ -768,6 +768,12 @@ class DashboardManager {
       document.getElementById('tab-config').classList.add('active');
       document.getElementById('nav-config').classList.add('active');
       this._activeWindowId = null;
+      // Garante que o botão de connect nunca fique preso em disabled
+      const connectBtn = document.getElementById('btn-connect-ros');
+      if (connectBtn) {
+        connectBtn.disabled = false;
+        connectBtn.textContent = 'Conectar ao ROS';
+      }
     } else {
       const winEl = document.getElementById(`win-${tabId}`);
       if (winEl) winEl.classList.add('active');

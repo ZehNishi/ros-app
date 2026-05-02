@@ -1,0 +1,745 @@
+================================================================================
+CONTEXTO COMPLETO DO PROJETO: ros-fastapi-backend
+================================================================================
+
+Este arquivo foi gerado para servir como contexto completo para um modelo de
+linguagem que atuará como assistente nos próximos prompts relacionados a este
+projeto. Leia tudo antes de responder qualquer pergunta sobre o sistema.
+
+INSTRUÇÕES PARA O MODELO QUE LER ESTE ARQUIVO:
+  Você é um assistente técnico especializado neste projeto. Seu papel é:
+  - Responder dúvidas sobre o código e a arquitetura.
+  - Ajudar a implementar novas funcionalidades seguindo os padrões já
+    estabelecidos no projeto.
+  - Identificar bugs e propor correções consistentes com o estilo do código.
+  - Sugerir melhorias sem quebrar a compatibilidade com Python 3.8.
+  - Sempre considerar que o projeto roda localmente (fora do Replit), em uma
+    máquina com ROS Noetic instalado.
+  Ao responder, cite os arquivos e funções relevantes pelo caminho exato
+  (ex: app/ros/topic_manager.py). Use português, pois o usuário se comunica
+  em português.
+
+================================================================================
+SEÇÃO 1 — HISTÓRICO DE PROMPTS ENVIADOS PELO USUÁRIO
+================================================================================
+
+A seguir estão todos os prompts enviados pelo usuário ao longo do
+desenvolvimento do projeto, em ordem cronológica.
+
+--------------------------------------------------------------------------------
+PROMPT 1 (início do projeto):
+  "Build a structured Python backend (ros-backend/) integrating FastAPI with
+   ROS Noetic via rospy, designed to run locally outside Replit. Modular
+   architecture: ROS logic in app/ros/, API logic in app/api/. All features:
+   dynamic topic subscribe/unsubscribe, message history, CSV recording, PNG
+   plots, SSE streaming, and a live web dashboard. Full Python 3.8
+   compatibility required."
+
+  Contexto: Este foi o prompt de criação do projeto inteiro. Definiu:
+  - Pasta raiz: ros-backend/
+  - Stack: FastAPI + rospy (ROS Noetic)
+  - Onde roda: localmente, fora do Replit
+  - Arquitetura: app/ros/ para lógica ROS, app/api/ para lógica de API
+  - Funcionalidades obrigatórias: subscribe/unsubscribe dinâmico, histórico
+    de mensagens, gravação CSV, gráficos PNG via matplotlib, streaming SSE,
+    dashboard web ao vivo.
+  - Restrição crítica: compatibilidade total com Python 3.8.
+
+--------------------------------------------------------------------------------
+PROMPT 2 (dashboard ao vivo):
+  Solicitação implícita de criar o dashboard web em tempo real com:
+  - Visualização Chart.js dos dados de tópicos ROS.
+  - Conexão via SSE (EventSource) com reconexão automática com backoff
+    exponencial.
+  - Contador de Hz (frequência de mensagens recebidas).
+  - Exportação de gráfico em PNG.
+  - Tema escuro.
+  - Integração do dashboard no FastAPI: GET / redireciona para o dashboard;
+    StaticFiles montado em /ui APÓS as rotas de API.
+
+  Resultado: criação de static/dashboard.html e adição de aiofiles ao
+  requirements.txt.
+
+--------------------------------------------------------------------------------
+PROMPT 3 (push para GitHub):
+  "User pushed to GitHub (https://github.com/ZehNishi/ros-app/) using PAT
+   token embedded in remote URL."
+
+  Resultado: configuração do remote git com token de autenticação pessoal
+  (PAT) embutido na URL. O repositório GitHub é:
+  https://github.com/ZehNishi/ros-app/
+
+--------------------------------------------------------------------------------
+PROMPT 4 (auditoria Python 3.8):
+  Solicitação de realizar auditoria completa de compatibilidade com Python
+  3.8, identificar todos os problemas e aplicar as correções necessárias.
+
+  Resultado: identificação de 3 categorias de problemas e correção de 11
+  arquivos (detalhado na Seção 6).
+
+--------------------------------------------------------------------------------
+PROMPT 5 (atualizar git):
+  "Atualize o git com o codigo atualizado"
+
+  Resultado: confirmação de que origin já está configurado com token e
+  instrução para rodar: git push origin main
+
+--------------------------------------------------------------------------------
+PROMPT 6 (este arquivo):
+  "Faça um arquivo txt, que descreva tudo o que foi feito nesse projeto, vou
+   passar para usar de contexto em outro modelo de texto, então descreva
+   absolutamente tudo e como foi feito para ele ter o contexto inteiro,
+   explique tambem que é para ele funcionar como um ajudante para os promts.
+   Inclua os pronts ja enviados para voce tambem."
+
+  Resultado: este arquivo CONTEXTO_PROJETO.txt.
+
+================================================================================
+SEÇÃO 2 — VISÃO GERAL DO PROJETO
+================================================================================
+
+Nome do projeto : ros-fastapi-backend
+Pasta raiz      : ros-backend/
+Repositório     : https://github.com/ZehNishi/ros-app/
+Branch principal: main
+
+Objetivo:
+  Backend Python que expõe uma API REST + SSE para interagir com um ambiente
+  ROS Noetic em tempo real. Permite que qualquer cliente HTTP (browser,
+  scripts, outros serviços) se comunique com tópicos ROS sem precisar ter
+  rospy instalado no cliente.
+
+Onde roda:
+  Localmente, na mesma máquina onde o ROS Noetic está instalado. Não é
+  implantado em nuvem nem no Replit em produção.
+
+Pré-requisitos de ambiente:
+  - Ubuntu 20.04 (recomendado para ROS Noetic)
+  - ROS Noetic instalado: sudo apt install ros-noetic-desktop-full
+  - Python 3.8 (versão padrão do Ubuntu 20.04)
+  - Ambiente ROS ativo: source /opt/ros/noetic/setup.bash
+  - roscore rodando em outro terminal antes de iniciar a API
+
+Como iniciar a API:
+  cd ros-backend
+  pip install -r requirements.txt
+  source /opt/ros/noetic/setup.bash
+  uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  Ou via script:
+  bash scripts/start.sh
+
+Como acessar:
+  - Dashboard: http://localhost:8000/
+  - Swagger UI: http://localhost:8000/docs
+  - ReDoc:      http://localhost:8000/redoc
+
+================================================================================
+SEÇÃO 3 — STACK TECNOLÓGICA
+================================================================================
+
+Linguagem      : Python 3.8 (obrigatório)
+Framework API  : FastAPI >= 0.111.0
+Servidor ASGI  : uvicorn[standard] >= 0.29.0
+Validação      : pydantic >= 2.7.0
+Config env     : pydantic-settings >= 2.2.0
+ROS            : rospy (parte do ROS Noetic, não instalável via pip)
+Gráficos       : matplotlib >= 3.7.0 + numpy >= 1.24.0
+Arquivos est.  : aiofiles >= 23.0.0
+Frontend       : HTML/CSS/JS puro (sem framework), Chart.js via CDN
+Streaming      : Server-Sent Events (SSE) via FastAPI StreamingResponse
+
+NOTA sobre rospy:
+  rospy não está no requirements.txt porque é instalado junto com o ROS
+  Noetic via apt, não via pip. Todos os imports de rospy no código são
+  LAZY (feitos dentro de métodos, não no topo do arquivo). Isso permite
+  que a API suba sem erros mesmo em máquinas sem ROS instalado — nesse
+  caso, rotas ROS retornam HTTP 503.
+
+================================================================================
+SEÇÃO 4 — ESTRUTURA DE ARQUIVOS COMPLETA
+================================================================================
+
+ros-backend/
+├── requirements.txt             — dependências pip
+├── README.md                    — documentação básica
+├── scripts/
+│   └── start.sh                 — script de inicialização da API
+├── static/
+│   └── dashboard.html           — dashboard web em tempo real
+└── app/
+    ├── __init__.py
+    ├── main.py                  — ponto de entrada FastAPI
+    ├── api/
+    │   ├── __init__.py
+    │   ├── router.py            — agrega todos os sub-roteadores
+    │   ├── routes_files.py      — endpoints de sistema de arquivos
+    │   ├── routes_system.py     — endpoints de execução de comandos
+    │   └── endpoints/
+    │       ├── __init__.py
+    │       ├── health.py        — health check da API e do ROS
+    │       ├── topics.py        — listagem de tópicos ROS
+    │       ├── subscriptions.py — subscribe/unsubscribe/stream SSE
+    │       ├── recording.py     — gravação de dados em CSV
+    │       └── plot.py          — geração de gráficos PNG
+    ├── core/
+    │   ├── __init__.py
+    │   ├── config.py            — configurações via variáveis de ambiente
+    │   └── logging.py           — logger estruturado da aplicação
+    └── ros/
+        ├── __init__.py
+        ├── ros_client.py        — inicialização e shutdown do nó ROS
+        ├── topic_manager.py     — subscribe/unsubscribe dinâmico + buffer
+        ├── data_recorder.py     — gravação CSV com thread de background
+        ├── message_converter.py — serialização de msg ROS → dict Python
+        ├── node.py              — utilitários do nó ROS
+        └── topics.py            — consulta de tópicos disponíveis
+
+================================================================================
+SEÇÃO 5 — ARQUITETURA DETALHADA
+================================================================================
+
+5.1 — Separação de responsabilidades
+--------------------------------------
+  app/ros/     → toda lógica que fala diretamente com o ROS (rospy)
+  app/api/     → toda lógica HTTP (FastAPI, Pydantic, rotas)
+  app/core/    → configuração global e logging
+  static/      → frontend estático (dashboard)
+
+  Os módulos em app/api/ NUNCA importam rospy diretamente.
+  Eles chamam os singletons de app/ros/ (ros_client, topic_manager,
+  data_recorder) que encapsulam todo o código rospy.
+
+5.2 — Singleton pattern
+------------------------
+  Três singletons globais são criados uma vez e compartilhados por toda
+  a aplicação:
+
+  ros_client    (app/ros/ros_client.py)
+    - Gerencia o ciclo de vida do nó ROS (init / shutdown).
+    - Verifica se ROS está disponível.
+    - Lança ROSUnavailableError se rospy não estiver instalado ou
+      roscore não estiver rodando.
+    - Lança ROSNotInitializedError se operações forem chamadas antes
+      de ros_client.init().
+
+  topic_manager (app/ros/topic_manager.py)
+    - Gerencia todas as subscrições dinâmicas.
+    - Mantém para cada tópico:
+        * latest_message: última msg recebida (acesso O(1))
+        * history: deque circular thread-safe (até TOPIC_BUFFER_SIZE msgs)
+    - Métodos principais: subscribe(), unsubscribe(), unsubscribe_all(),
+      get_latest(), get_history(), list_subscribed()
+    - Thread-safe: cada subscrição tem seu próprio threading.Lock.
+
+  data_recorder (app/ros/data_recorder.py)
+    - Grava dados de tópicos ROS em memória durante a sessão.
+    - Thread de background (threading.Thread) coleta mensagens do
+      topic_manager a cada RECORD_INTERVAL segundos.
+    - Exporta para CSV ao chamar save_to_csv().
+    - Formatos de CSV: timestamp Unix + campos planos da mensagem
+      (campos nested são aplanados com notação de ponto, ex: header.stamp.secs).
+
+5.3 — Ciclo de vida (lifespan)
+--------------------------------
+  Gerenciado pelo asynccontextmanager lifespan em app/main.py:
+
+  STARTUP:
+    1. ros_client.init() é chamado.
+    2. Se ROS não disponível: log de aviso, API sobe assim mesmo.
+    3. Rotas ROS retornarão HTTP 503 até o ROS estar disponível.
+
+  SHUTDOWN:
+    1. topic_manager.unsubscribe_all() — cancela todas as subscrições.
+    2. ros_client.shutdown() — desliga o nó ROS.
+
+5.4 — Tratamento de erros globais
+------------------------------------
+  Dois exception handlers registrados em app/main.py:
+
+  ROSUnavailableError  → HTTP 503 Service Unavailable
+    Causas: roscore não rodando, rospy não instalado,
+            ROS_MASTER_URI incorreto.
+
+  ROSNotInitializedError → HTTP 500 Internal Server Error
+    Causa: bug de programação (ros_client.init() não foi chamado).
+
+5.5 — Serialização de mensagens ROS
+--------------------------------------
+  app/ros/message_converter.py → convert_ros_message(msg, include_meta)
+  - Converte objetos rospy para dict Python serializável em JSON.
+  - Trata recursivamente campos nested, listas, dicts.
+  - Campo include_meta=True adiciona metadados (_type, _md5sum, etc.).
+
+5.6 — Imports lazy de rospy
+------------------------------
+  Todo arquivo que usa rospy importa DENTRO dos métodos, nunca no topo:
+
+  def subscribe(self, topic: str):
+      import rospy   # ← import lazy
+      rospy.Subscriber(...)
+
+  Isso garante que a API inicie sem erros em máquinas sem ROS.
+
+5.7 — Ordem de registro de rotas (crítico)
+--------------------------------------------
+  FastAPI faz matching de rotas na ORDEM em que são registradas.
+  Rotas mais específicas devem vir ANTES de rotas com path converters.
+
+  Em subscriptions.py (prefixo /topic/{name}):
+    1. GET /topic/{name}/history  — registrada PRIMEIRO
+    2. GET /topic/{name}/stream   — registrada SEGUNDO
+    3. GET /topic/{name}          — registrada ÚLTIMA (engole tudo)
+
+  Em plot.py:
+    1. GET /plot/gps/compare      — literal, registrada PRIMEIRO
+    2. GET /plot/gps/{topic:path} — path converter, SEGUNDA
+    3. GET /plot/{topic:path}     — mais genérico, registrada ÚLTIMA
+
+  StaticFiles (/ui) é montado DEPOIS de todos os roteadores em main.py
+  para não sombrear rotas da API.
+
+================================================================================
+SEÇÃO 6 — LISTA COMPLETA DE ENDPOINTS (21 rotas)
+================================================================================
+
+Todas as rotas têm prefixo base: /api/v1
+
+  GET  /health
+    Retorna status da API (sempre 200 se a API estiver rodando).
+    Campos: status, app_name, version, timestamp.
+
+  GET  /health/ros
+    Retorna status do nó ROS.
+    Campos: ros_available (bool), ros_master_uri, node_name.
+    Não retorna 503 — sempre responde com o campo ros_available indicando
+    se o ROS está ou não acessível.
+
+  GET  /topics
+    Lista todos os tópicos ROS publicados atualmente.
+    Requer ROS. Retorna array de {name, type}.
+    Fonte: rospy.get_published_topics()
+
+  POST /subscribe
+    Body: {"topic": "/nome/topico", "msg_type": "std_msgs/String"}
+    Inicia subscrição dinâmica ao tópico. Se msg_type omitido, tenta
+    resolver automaticamente via get_published_topics().
+    Requer ROS.
+
+  POST /unsubscribe
+    Body: {"topic": "/nome/topico"}
+    Cancela subscrição ativa. Libera o subscriber rospy.
+
+  GET  /subscriptions
+    Lista todas as subscrições ativas com estatísticas:
+    nome do tópico, tipo, total de msgs recebidas, se há última msg.
+
+  GET  /topic/{name}/history?limit=N&since=T
+    Retorna até N mensagens do buffer histórico do tópico.
+    since=T (Unix timestamp) filtra mensagens após aquele momento.
+    Mensagens ROS são convertidas para dict via message_converter.
+
+  GET  /topic/{name}/stream
+    SSE (Server-Sent Events). Abre conexão persistente que envia
+    mensagens do tópico em tempo real conforme chegam.
+    Formato: data: {"timestamp": float, "msg": {...}}\n\n
+    O cliente deve usar EventSource no browser ou ler o chunked HTTP.
+
+  GET  /topic/{name}
+    Retorna a última mensagem recebida do tópico.
+    HTTP 404 se o tópico não estiver subscrito.
+    HTTP 204 se subscrito mas sem mensagem ainda.
+
+  GET  /files?path=CAMINHO&show_hidden=false
+    Lista arquivos e diretórios no caminho especificado.
+    O caminho é relativo a FILES_BASE_PATH (padrão: ~/catkin_ws).
+    Retorna: tipo (file/dir), nome, tamanho, data de modificação.
+
+  GET  /file?path=CAMINHO
+    Lê conteúdo de arquivo (texto). Limite: FILES_MAX_READ_BYTES (1 MB).
+
+  POST /file
+    Body: {"path": "relativo", "content": "conteúdo"}
+    Cria ou substitui arquivo. Limite: FILES_MAX_WRITE_BYTES (1 MB).
+
+  POST /run
+    Body: {"command": ["rosrun", "pkg", "node"], "timeout": 10}
+    Executa comando e aguarda conclusão. Retorna stdout, stderr,
+    return_code. Timeout padrão: SYSTEM_DEFAULT_TIMEOUT (10s).
+    Somente comandos em SYSTEM_ALLOWED_COMMANDS são permitidos.
+
+  POST /run/background
+    Body: {"command": [...]}
+    Executa comando em background (subprocess não bloqueante).
+    Retorna pid do processo iniciado.
+
+  POST /kill
+    Body: {"pid": 1234}
+    Encerra processo pelo PID. Envia SIGTERM primeiro, depois SIGKILL.
+
+  POST /recording/start
+    Body: {"topics": ["/topic1", "/topic2"]}
+    Inicia sessão de gravação. Thread de background coleta mensagens
+    a cada RECORD_INTERVAL segundos (padrão 0.2s = 5 Hz).
+
+  POST /recording/stop
+    Para a thread de gravação. Dados ficam em memória para exportação.
+
+  POST /recording/save
+    Body: {"output_dir": "caminho/relativo"} (opcional)
+    Exporta dados gravados para arquivos CSV. Um CSV por tópico.
+    Retorna dict com {topico: caminho_do_arquivo}.
+
+  GET  /recording/status
+    Retorna estado atual: recording (bool), topics, counts (msgs por
+    tópico), start_time.
+
+  GET  /plot/{topic:path}?field=CAMPO&limit=500&list_index=N&list_agg=mean
+    Gera gráfico PNG de um campo numérico do histórico de um tópico.
+    Parâmetros:
+      field     — campo da mensagem (suporta notação de ponto: pose.x)
+      limit     — máximo de pontos no gráfico (padrão 500)
+      list_index — índice se o campo for lista (opcional)
+      list_agg   — agregação se campo for lista: mean/min/max/sum/first/last
+    Retorna: image/png
+    Internamente usa matplotlib com eixo X formatado em tempo legível.
+
+  GET  /plot/gps/{topic:path}?lat_field=latitude&lon_field=longitude&limit=2000
+    Gera gráfico PNG de trajetória GPS (latitude × longitude).
+    Marcadores de início (triângulo verde) e fim (quadrado vermelho).
+    Gradiente de cor azul ao longo do tempo.
+
+  GET  /plot/gps/compare?topics=T1&topics=T2&lat_field=...&lon_field=...
+    Sobrepõe múltiplas trajetórias GPS em um único gráfico.
+    Cada tópico recebe cor distinta da paleta tab10/tab20.
+    Parâmetro topics pode ser repetido para múltiplos tópicos.
+    show_markers=true (padrão) adiciona marcadores início/fim.
+
+================================================================================
+SEÇÃO 7 — DASHBOARD WEB (static/dashboard.html)
+================================================================================
+
+Arquivo único HTML/CSS/JS sem dependências de build.
+Servido por FastAPI via StaticFiles em /ui/dashboard.html.
+GET / redireciona automaticamente para o dashboard (HTTP 302).
+
+Funcionalidades:
+  - Seletor de tópico: lista tópicos subscritos via GET /api/v1/subscriptions.
+  - Campo de campo (field): especifica qual campo da mensagem plotar.
+  - Conexão SSE: usa EventSource para receber mensagens em tempo real.
+  - Reconexão automática: backoff exponencial (1s, 2s, 4s... até 30s)
+    ao perder conexão.
+  - Gráfico ao vivo: Chart.js com janela deslizante de 100 pontos.
+  - Contador de Hz: calcula frequência de mensagens nos últimos 3 segundos.
+  - Exportação PNG: botão "Exportar PNG" chama GET /api/v1/plot/{topic}.
+  - Tema escuro: fundo #1a1a2e, acentos azuis #2196F3.
+  - Status visual: indicador de conexão (verde=conectado, vermelho=desconectado).
+
+Fluxo de uso no dashboard:
+  1. Usuário seleciona tópico no dropdown.
+  2. Digita o nome do campo a visualizar.
+  3. Clica em "Conectar".
+  4. EventSource abre GET /api/v1/topic/{nome}/stream.
+  5. A cada evento SSE recebido, Chart.js atualiza o gráfico.
+  6. Hz counter atualiza a cada segundo.
+
+================================================================================
+SEÇÃO 8 — CONFIGURAÇÕES (app/core/config.py)
+================================================================================
+
+Todas as configurações usam pydantic-settings e podem ser sobrescritas
+via variáveis de ambiente ou arquivo .env na raiz do projeto.
+
+  APP_NAME               = "ros-fastapi-backend"
+  APP_VERSION            = "0.1.0"
+  HOST                   = "0.0.0.0"
+  PORT                   = 8000
+  ROS_MASTER_URI         = "http://localhost:11311"
+  ROS_NODE_NAME          = "fastapi_ros_node"
+  TOPIC_BUFFER_SIZE      = 1000     (máx msgs no buffer por tópico)
+  RECORD_INTERVAL        = 0.2      (segundos entre coletas do recorder)
+  FILES_BASE_PATH        = ~/catkin_ws
+  FILES_MAX_READ_BYTES   = 1048576  (1 MB)
+  FILES_MAX_WRITE_BYTES  = 1048576  (1 MB)
+  SYSTEM_WORKDIR         = ~/catkin_ws
+  SYSTEM_DEFAULT_TIMEOUT = 10       (segundos para POST /run)
+  SYSTEM_MAX_OUTPUT_BYTES= 1048576  (1 MB)
+  SYSTEM_ALLOWED_COMMANDS= ["rosrun","roslaunch","catkin","catkin_make",
+                             "python","python3"]
+  LOG_LEVEL              = "INFO"
+
+Exemplo de .env:
+  ROS_MASTER_URI=http://192.168.1.100:11311
+  TOPIC_BUFFER_SIZE=5000
+  RECORD_INTERVAL=0.1
+  LOG_LEVEL=DEBUG
+  FILES_BASE_PATH=/home/usuario/meu_workspace
+
+================================================================================
+SEÇÃO 9 — AUDITORIA DE COMPATIBILIDADE PYTHON 3.8
+================================================================================
+
+Após a implementação, foi realizada auditoria completa de compatibilidade
+com Python 3.8. Três categorias de problemas foram identificadas e corrigidas.
+
+9.1 — Categoria 1: PEP 585 — built-in generics requerem Python 3.9+
+----------------------------------------------------------------------
+  PROBLEMA:
+    Em Python 3.8, usar list[str], dict[str, Any], tuple[str, str] etc.
+    DIRETAMENTE como generics (não como strings) em anotações avaliadas
+    em runtime levanta:
+      TypeError: 'type' object is not subscriptable
+
+    Anotações avaliadas em runtime incluem:
+      - Campos de Pydantic models (avaliados pelo Pydantic no import)
+      - Assinaturas de funções/métodos (avaliadas pelo Python no def)
+      - Variáveis de módulo e de classe (avaliadas no import)
+
+    Anotações NÃO avaliadas em runtime (seguras no 3.8):
+      - Variáveis locais dentro de funções/métodos
+
+  SOLUÇÃO APLICADA:
+    Adicionar "from __future__ import annotations" ao topo de cada
+    arquivo afetado. Este pragma (PEP 563) faz com que TODAS as
+    anotações sejam tratadas como strings lazy, nunca avaliadas em
+    runtime pelo interpretador Python 3.8.
+
+    É compatível com Pydantic v2 (que usa typing.get_type_hints()
+    internamente e lida corretamente com anotações lazy).
+
+  ARQUIVOS CORRIGIDOS (10 arquivos):
+    app/api/endpoints/recording.py
+    app/api/endpoints/subscriptions.py
+    app/api/endpoints/topics.py
+    app/api/endpoints/plot.py
+    app/api/routes_files.py
+    app/api/routes_system.py
+    app/core/config.py
+    app/ros/data_recorder.py
+    app/ros/ros_client.py
+    app/ros/topic_manager.py
+
+9.2 — Categoria 2: typing.Annotated requer Python 3.9+
+---------------------------------------------------------
+  PROBLEMA:
+    typing.Annotated foi adicionado ao módulo typing apenas no Python
+    3.9 (PEP 593). Em Python 3.8, a linha:
+      from typing import Annotated
+    levanta ImportError.
+
+    Arquivo afetado: app/api/endpoints/plot.py
+    Uso: parâmetros de Query com metadados (ex: Annotated[str, Query(...)]).
+
+  SOLUÇÃO APLICADA:
+    Substituído por fallback com try/except:
+      try:
+          from typing import Annotated        # Python 3.9+
+      except ImportError:
+          from typing_extensions import Annotated  # Python 3.8
+
+    typing_extensions já é instalado automaticamente como dependência
+    transitiva de FastAPI e Pydantic — não foi necessário adicionar ao
+    requirements.txt.
+
+9.3 — Categoria 3: matplotlib >= 3.8.0 requer Python 3.9+
+------------------------------------------------------------
+  PROBLEMA:
+    matplotlib 3.8.0 e versões superiores exigem Python >= 3.9.
+    Com "matplotlib>=3.8.0" no requirements.txt, pip no Python 3.8
+    falha com "Could not find a version that satisfies the requirement"
+    porque nenhuma versão >= 3.8.0 do matplotlib suporta Python 3.8.
+
+  SOLUÇÃO APLICADA:
+    requirements.txt:
+      ANTES: matplotlib>=3.8.0
+      DEPOIS: matplotlib>=3.7.0
+
+    matplotlib 3.7.x suporta Python 3.8. pip instala automaticamente
+    a versão mais recente compatível com o Python disponível.
+
+9.4 — Verificação de outros problemas (nenhum encontrado)
+----------------------------------------------------------
+  - Sintaxe "X | Y" para unions (Python 3.10+): NÃO encontrada.
+  - Statements "match/case" (Python 3.10+): NÃO encontrados.
+  - asyncio.get_event_loop() deprecado: NÃO usado de forma problemática.
+  - numpy>=1.24.0: pip resolve automaticamente para 1.24.x em Python 3.8
+    (numpy 1.25+ requer Python 3.9+, mas o pip respeita python_requires).
+  - fastapi>=0.111.0: suporta Python 3.8. OK.
+  - pydantic>=2.7.0: Pydantic v2 suporta Python 3.8. OK.
+  - uvicorn[standard]>=0.29.0: suporta Python 3.8. OK.
+  - pydantic-settings>=2.2.0: suporta Python 3.8. OK.
+  - aiofiles>=23.0.0: suporta Python 3.8. OK.
+
+================================================================================
+SEÇÃO 10 — GIT E REPOSITÓRIO
+================================================================================
+
+Repositório remoto: https://github.com/ZehNishi/ros-app/
+Branch principal  : main
+
+Commits no repositório (ordem cronológica):
+  1. fbb69c4 — Add GPS trajectory plotting to visualize routes
+  2. 22253b2 — Add GPS trajectory plotting to visualize routes (revisão)
+  3. 1b69f1e — Add real-time streaming for ROS topics using SSE
+  4. 10ff9c3 — Add a real-time data visualization dashboard using Chart.js
+  5. 121cec4 — Ensure project compatibility with Python 3.8
+
+Configuração do remote:
+  O remote "origin" está configurado com token de autenticação pessoal
+  (PAT) embutido na URL. Para enviar alterações:
+    git push origin main
+
+================================================================================
+SEÇÃO 11 — PADRÕES DE CÓDIGO ADOTADOS
+================================================================================
+
+11.1 — Estilo geral
+  - Português nos docstrings e comentários (exceto nomes de variáveis e funções).
+  - Docstrings em todas as classes e métodos públicos.
+  - Nenhum console.log ou print() — usar sempre o logger estruturado.
+
+11.2 — Logging
+  - Singleton logger obtido via: logger = get_logger(__name__)
+  - Em route handlers: req.log não é usado (FastAPI puro, sem middleware
+    de request logging). Usar logger diretamente.
+  - Nunca usar print() em código de servidor.
+
+11.3 — Erros de domínio
+  - ROSUnavailableError: ROS não está disponível.
+  - ROSNotInitializedError: ros_client.init() não foi chamado.
+  - TopicNotSubscribedError: operação em tópico não subscrito.
+  - TopicSubscribeError: falha ao criar subscriber rospy.
+  - Todos convertidos em respostas HTTP adequadas pelos exception handlers.
+
+11.4 — Thread-safety
+  - topic_manager: cada subscrição tem threading.Lock próprio.
+  - data_recorder: _lock (threading.Lock) protege todo estado mutável;
+    _stop_event (threading.Event) sinaliza parada da thread de background.
+  - Nunca usar time.sleep() em threads — usar Event.wait(timeout) para
+    resposta imediata ao sinal de parada.
+
+11.5 — Compatibilidade Python 3.8
+  - SEMPRE adicionar "from __future__ import annotations" em qualquer
+    arquivo novo que use anotações de tipo modernas.
+  - Annotated: usar o bloco try/except com fallback para typing_extensions.
+  - NÃO usar: X | Y unions, match/case, TypeAlias, ParamSpec, TypeGuard
+    (todos requerem Python 3.10+) sem fallback via typing_extensions.
+  - NÃO usar list[...], dict[...] sem "from __future__ import annotations".
+
+11.6 — Imports
+  - Imports da stdlib no topo do arquivo.
+  - Imports de terceiros logo após.
+  - Imports internos (app.*) por último.
+  - Imports de rospy SEMPRE lazy (dentro dos métodos).
+  - Seguir a convenção já estabelecida nos arquivos existentes.
+
+================================================================================
+SEÇÃO 12 — EXEMPLOS DE USO DA API (curl)
+================================================================================
+
+# Verificar se a API está rodando
+curl http://localhost:8000/api/v1/health
+
+# Verificar status do ROS
+curl http://localhost:8000/api/v1/health/ros
+
+# Listar tópicos ROS disponíveis
+curl http://localhost:8000/api/v1/topics
+
+# Subscrever a um tópico
+curl -X POST http://localhost:8000/api/v1/subscribe \
+  -H "Content-Type: application/json" \
+  -d '{"topic": "/chatter", "msg_type": "std_msgs/String"}'
+
+# Listar subscrições ativas
+curl http://localhost:8000/api/v1/subscriptions
+
+# Obter última mensagem de um tópico
+curl http://localhost:8000/api/v1/topic/%2Fchatter
+
+# Obter histórico (últimas 10 mensagens)
+curl "http://localhost:8000/api/v1/topic/%2Fchatter/history?limit=10"
+
+# Stream SSE em tempo real (abre conexão persistente)
+curl -N http://localhost:8000/api/v1/topic/%2Fchatter/stream
+
+# Cancelar subscrição
+curl -X POST http://localhost:8000/api/v1/unsubscribe \
+  -H "Content-Type: application/json" \
+  -d '{"topic": "/chatter"}'
+
+# Iniciar gravação
+curl -X POST http://localhost:8000/api/v1/recording/start \
+  -H "Content-Type: application/json" \
+  -d '{"topics": ["/chatter", "/scan"]}'
+
+# Parar gravação
+curl -X POST http://localhost:8000/api/v1/recording/stop
+
+# Exportar CSV
+curl -X POST http://localhost:8000/api/v1/recording/save \
+  -H "Content-Type: application/json" \
+  -d '{"output_dir": "recordings/sessao1"}'
+
+# Gerar gráfico PNG de campo numérico
+curl "http://localhost:8000/api/v1/plot/%2Fimu/data?field=linear_acceleration.x&limit=300" \
+  --output grafico.png
+
+# Gerar trajetória GPS
+curl "http://localhost:8000/api/v1/plot/gps/%2Fgps/fix?lat_field=latitude&lon_field=longitude" \
+  --output trajetoria.png
+
+# Comparar múltiplas trajetórias GPS
+curl "http://localhost:8000/api/v1/plot/gps/compare?topics=%2Fgps%2Ffix&topics=%2Fgps%2Ffix2&lat_field=latitude&lon_field=longitude" \
+  --output comparacao.png
+
+# Executar comando ROS
+curl -X POST http://localhost:8000/api/v1/run \
+  -H "Content-Type: application/json" \
+  -d '{"command": ["rosrun", "my_pkg", "my_node"], "timeout": 30}'
+
+# Listar arquivos no workspace
+curl "http://localhost:8000/api/v1/files?path=src"
+
+================================================================================
+SEÇÃO 13 — PONTOS DE ATENÇÃO PARA FUTURAS IMPLEMENTAÇÕES
+================================================================================
+
+1. SEMPRE testar com Python 3.8 (Ubuntu 20.04 padrão do ROS Noetic).
+
+2. Qualquer arquivo novo com anotações de tipo DEVE ter:
+   from __future__ import annotations
+   como primeira linha de código (após docstring/comentários).
+
+3. Nunca importar rospy no topo de um arquivo. Sempre lazy import:
+   def algum_metodo(self):
+       import rospy
+       ...
+
+4. Novas rotas com path converters (:path) devem ser registradas
+   APÓS rotas literais mais específicas no mesmo prefixo.
+
+5. StaticFiles deve sempre ser montado ÚLTIMO em main.py.
+
+6. Novos endpoints que dependem de ROS devem tratar ROSUnavailableError
+   ou deixar o exception handler global capturá-la (recomendado).
+
+7. Para adicionar nova configuração: adicionar campo em app/core/config.py
+   na classe Settings, com valor padrão e comentário explicativo.
+
+8. Para adicionar nova rota: criar endpoint em app/api/endpoints/,
+   registrar em app/api/router.py, documentar a rota na docstring do router.
+
+9. Não usar pydantic v1 syntax (validators com @validator) — o projeto usa
+   Pydantic v2 (@field_validator, model_validator).
+
+10. Os tópicos ROS na URL devem ser URL-encoded (/ vira %2F) quando usados
+    como path parameters. Ex: /chatter → %2Fchatter.
+
+================================================================================
+FIM DO DOCUMENTO
+================================================================================
+Data de geração: Maio de 2026
+Gerado por: Replit Agent (Claude)
+Projeto: https://github.com/ZehNishi/ros-app/
+================================================================================

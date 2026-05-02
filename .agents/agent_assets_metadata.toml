@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "tPbzcqtewFurbEXJeSf5j"
+uri = "file://ros-backend/CONTEXTO_PROJETO.txt"
+type = "text"
+title = "Contexto Completo do Projeto — ros-fastapi-backend"

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Any, Dict, List
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -38,7 +38,7 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 class StartRecordingRequest(BaseModel):
-    topics: list[str] = Field(
+    topics: List[str] = Field(
         ...,
         min_length=1,
         examples=[["/chatter", "/gps"]],
@@ -48,7 +48,7 @@ class StartRecordingRequest(BaseModel):
 
 class StartRecordingResponse(BaseModel):
     status: str
-    topics: list[str]
+    topics: List[str]
     detail: str
 
 
@@ -72,15 +72,15 @@ class SaveRecordingRequest(BaseModel):
 class SaveRecordingResponse(BaseModel):
     status: str
     output_dir: str
-    files: dict[str, str]
+    files: Dict[str, str]
     detail: str
 
 
 class RecordingStatusResponse(BaseModel):
     recording: bool
     thread_running: bool
-    topics: list[str]
-    counts: dict[str, int]
+    topics: List[str]
+    counts: Dict[str, int]
     total_entries: int
 
 

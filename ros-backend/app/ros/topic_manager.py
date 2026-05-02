@@ -33,7 +33,7 @@ import time
 import threading
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -127,7 +127,7 @@ class TopicManager:
 
     def __init__(self) -> None:
         # Dicionário { topic_name: _Subscription }
-        self._registry: dict[str, _Subscription] = {}
+        self._registry: Dict[str, _Subscription] = {}
 
         # Lock para operações no _registry (subscribe/unsubscribe/list)
         self._registry_lock: threading.Lock = threading.Lock()
@@ -279,7 +279,7 @@ class TopicManager:
         self,
         topic_name: str,
         limit: Optional[int] = None,
-    ) -> list[dict[str, Any]]:
+    ) -> List[Dict[str, Any]]:
         """
         Retorna o histórico de mensagens recebidas no tópico.
 
@@ -377,7 +377,7 @@ class TopicManager:
     # Métodos de inspeção
     # ------------------------------------------------------------------
 
-    def list_subscribed(self) -> list[dict[str, Any]]:
+    def list_subscribed(self) -> List[Dict[str, Any]]:
         """
         Lista todos os tópicos atualmente subscritos com estatísticas básicas.
 

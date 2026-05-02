@@ -18,7 +18,7 @@ Pré-requisito:
 from __future__ import annotations
 
 import threading
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -199,14 +199,14 @@ class RosClient:
     # Métodos de consulta ao master ROS
     # ------------------------------------------------------------------
 
-    def get_topics(self) -> list[tuple[str, str]]:
+    def get_topics(self) -> List[Tuple[str, str]]:
         """
         Retorna a lista de tópicos publicados ativos no roscore.
 
         Cada item é uma tupla ``(nome_do_tópico, tipo_da_mensagem)``.
 
         Returns:
-            list[tuple[str, str]]: ex. [('/chatter', 'std_msgs/String'), ...]
+            List[Tuple[str, str]]: ex. [('/chatter', 'std_msgs/String'), ...]
 
         Raises:
             ROSNotInitializedError: se init() não foi chamado antes.
@@ -224,8 +224,8 @@ class RosClient:
             import rospy  # noqa: PLC0415
 
             # get_published_topics() retorna List[List[str, str]]
-            raw: list[list[str]] = rospy.get_published_topics()
-            topics: list[tuple[str, str]] = [(name, t) for name, t in raw]
+            raw: List[List[str]] = rospy.get_published_topics()
+            topics: List[Tuple[str, str]] = [(name, t) for name, t in raw]
 
             logger.info(
                 "get_topics(): %d tópico(s) encontrado(s).",

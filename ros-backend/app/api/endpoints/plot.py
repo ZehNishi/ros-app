@@ -45,7 +45,7 @@ try:
     from typing import Annotated
 except ImportError:
     from typing_extensions import Annotated  # Python 3.8
-from typing import Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -147,7 +147,7 @@ def get_gps_compare(
             detail="O parâmetro 'topics' está vazio. Informe ao menos um tópico.",
         )
     # Remove duplicatas preservando ordem
-    seen: dict[str, None] = {}
+    seen: Dict[str, None] = {}
     for t in topic_list:
         seen[t] = None
     topic_list = list(seen.keys())
@@ -172,8 +172,8 @@ def get_gps_compare(
     # Coleta de dados por tópico
     # ------------------------------------------------------------------
     # { topic: {"lats": np.ndarray, "lons": np.ndarray} }
-    trajectories: dict[str, dict] = {}
-    skipped_topics: list[str] = []
+    trajectories: Dict[str, dict] = {}
+    skipped_topics: List[str] = []
 
     for topic in topic_list:
         try:
@@ -190,8 +190,8 @@ def get_gps_compare(
 
         history = history[-limit:]
 
-        lats: list[float] = []
-        lons: list[float] = []
+        lats: List[float] = []
+        lons: List[float] = []
         for entry in history:
             try:
                 msg_dict = convert_ros_message(entry["msg"], include_meta=False)
@@ -347,8 +347,8 @@ def get_gps_plot(
     # ------------------------------------------------------------------
     # 2. Extrai lat / lon de cada mensagem
     # ------------------------------------------------------------------
-    lats: list[float] = []
-    lons: list[float] = []
+    lats: List[float] = []
+    lons: List[float] = []
     skipped = 0
 
     for entry in history:
@@ -657,7 +657,7 @@ def _resolve_value(
     return None
 
 
-def _sample_fields(msg) -> list[str]:
+def _sample_fields(msg) -> List[str]:
     """
     Retorna os campos de nível superior de uma mensagem para dicas de erro.
     Não falha — retorna lista vazia em caso de qualquer exceção.
@@ -978,7 +978,7 @@ def _render_compare_plot(
     np,
     *,
     trajectories: dict,
-    skipped: list[str],
+    skipped: List[str],
     lat_field: str,
     lon_field: str,
     show_markers: bool,
@@ -1009,8 +1009,8 @@ def _render_compare_plot(
     fig, ax = plt.subplots(figsize=(9, 8), dpi=100)
 
     try:
-        all_lats: list[float] = []
-        all_lons: list[float] = []
+        all_lats: List[float] = []
+        all_lons: List[float] = []
 
         for idx, (topic, data) in enumerate(trajectories.items()):
             lat = data["lats"]

@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-from typing import Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -35,7 +35,7 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 # Registro de processos background ativos { pid: Popen }
-_background_processes: dict[int, subprocess.Popen] = {}
+_background_processes: Dict[int, subprocess.Popen] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ _background_processes: dict[int, subprocess.Popen] = {}
 # ---------------------------------------------------------------------------
 
 class RunRequest(BaseModel):
-    command: list[str] = Field(
+    command: List[str] = Field(
         ...,
         min_length=1,
         examples=[["rosrun", "turtlesim", "turtlesim_node"]],
@@ -61,14 +61,14 @@ class RunRequest(BaseModel):
 
     @field_validator("command")
     @classmethod
-    def command_not_empty(cls, v: list[str]) -> list[str]:
+    def command_not_empty(cls, v: List[str]) -> List[str]:
         if not v or not v[0].strip():
             raise ValueError("O comando não pode ser vazio.")
         return v
 
 
 class RunResponse(BaseModel):
-    command: list[str]
+    command: List[str]
     workdir: str
     returncode: int
     stdout: str
@@ -77,7 +77,7 @@ class RunResponse(BaseModel):
 
 
 class BackgroundRunRequest(BaseModel):
-    command: list[str] = Field(
+    command: List[str] = Field(
         ...,
         min_length=1,
         examples=[["roslaunch", "turtlesim", "multisim.launch"]],
@@ -86,7 +86,7 @@ class BackgroundRunRequest(BaseModel):
 
     @field_validator("command")
     @classmethod
-    def command_not_empty(cls, v: list[str]) -> list[str]:
+    def command_not_empty(cls, v: List[str]) -> List[str]:
         if not v or not v[0].strip():
             raise ValueError("O comando não pode ser vazio.")
         return v
@@ -94,7 +94,7 @@ class BackgroundRunRequest(BaseModel):
 
 class BackgroundRunResponse(BaseModel):
     pid: int
-    command: list[str]
+    command: List[str]
     workdir: str
     status: str
 
@@ -113,7 +113,7 @@ class KillResponse(BaseModel):
 # Guard: allowlist de executáveis
 # ---------------------------------------------------------------------------
 
-def _assert_command_allowed(command: list[str]) -> None:
+def _assert_command_allowed(command: List[str]) -> None:
     """
     Verifica se o executável (command[0]) está na allowlist configurada.
 

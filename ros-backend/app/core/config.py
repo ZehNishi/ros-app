@@ -13,6 +13,7 @@ Exemplo de .env:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import List
 
 from pydantic_settings import BaseSettings
 
@@ -67,7 +68,7 @@ class Settings(BaseSettings):
     # Somente o primeiro elemento da lista de argumentos é verificado.
     # Uma lista vazia desativa a restrição (permite tudo — não recomendado).
     # Exemplo via .env: SYSTEM_ALLOWED_COMMANDS='["rosrun","roslaunch"]'
-    SYSTEM_ALLOWED_COMMANDS: list[str] = [
+    SYSTEM_ALLOWED_COMMANDS: List[str] = [
         "rosrun",
         "roslaunch",
         "catkin",

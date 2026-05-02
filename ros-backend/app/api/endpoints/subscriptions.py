@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -82,26 +82,26 @@ class SubscriptionInfo(BaseModel):
 
 class SubscriptionsResponse(BaseModel):
     count: int
-    subscriptions: list[SubscriptionInfo]
+    subscriptions: List[SubscriptionInfo]
 
 
 class TopicMessageResponse(BaseModel):
     topic: str
     has_message: bool
-    message: Optional[dict[str, Any]] = None
+    message: Optional[Dict[str, Any]] = None
     status: str
 
 
 class HistoryEntry(BaseModel):
     timestamp: float
-    data: dict[str, Any]
+    data: Dict[str, Any]
 
 
 class TopicHistoryResponse(BaseModel):
     topic: str
     count: int
     buffer_max: int
-    entries: list[HistoryEntry]
+    entries: List[HistoryEntry]
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +288,7 @@ def get_topic_history(
     # Converte cada mensagem do snapshot para dict JSON-serializável.
     # O snapshot já é uma cópia independente do buffer (list(...) no get_history),
     # portanto a conversão não bloqueia nem afeta o buffer original.
-    entries: list[HistoryEntry] = []
+    entries: List[HistoryEntry] = []
     conversion_errors = 0
 
     for i, entry in enumerate(snapshot):

@@ -22,7 +22,7 @@ Limites configuráveis via settings (app/core/config.py ou .env):
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -48,7 +48,7 @@ class FileEntry(BaseModel):
 class ListFilesResponse(BaseModel):
     base_path: str
     path: str
-    entries: list[FileEntry]
+    entries: List[FileEntry]
 
 
 class ReadFileResponse(BaseModel):
@@ -180,7 +180,7 @@ def list_files(
             detail=f"'{path}' é um arquivo, não um diretório. Use GET /file para lê-lo.",
         )
 
-    entries: list[FileEntry] = []
+    entries: List[FileEntry] = []
     try:
         for item in sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name)):
             rel = str(item.relative_to(base))

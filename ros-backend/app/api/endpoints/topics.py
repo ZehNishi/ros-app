@@ -11,6 +11,8 @@ em app/main.py e convertidos em HTTP 503 e HTTP 500 respectivamente.
 
 from __future__ import annotations
 
+from typing import List, Tuple
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -32,7 +34,7 @@ class TopicInfo(BaseModel):
 
 class TopicsResponse(BaseModel):
     count: int
-    topics: list[TopicInfo]
+    topics: List[TopicInfo]
 
 
 class TopicDetailResponse(BaseModel):
@@ -63,7 +65,7 @@ def list_topics():
     logger.info("GET /topics — consultando tópicos no roscore.")
 
     # ROSUnavailableError e ROSNotInitializedError propagam para o handler global
-    raw_topics: list[tuple[str, str]] = ros_client.get_topics()
+    raw_topics: List[Tuple[str, str]] = ros_client.get_topics()
 
     topics = [TopicInfo(name=name, type=msg_type) for name, msg_type in raw_topics]
 

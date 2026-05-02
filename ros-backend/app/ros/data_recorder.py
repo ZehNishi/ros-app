@@ -42,7 +42,7 @@ import csv
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -108,7 +108,7 @@ class DataRecorder:
             return self._recording
 
     @property
-    def topics(self) -> list[str]:
+    def topics(self) -> List[str]:
         """Cópia da lista de tópicos gravados na sessão atual."""
         with self._lock:
             return list(self._topics)
@@ -124,7 +124,7 @@ class DataRecorder:
 
     def start_recording(
         self,
-        topics: list[str],
+        topics: List[str],
         interval: Optional[float] = None,
     ) -> None:
         """
@@ -292,7 +292,7 @@ class DataRecorder:
     # Coleta de dados (pode ser chamada externamente ou pela thread)
     # ------------------------------------------------------------------
 
-    def record_from_buffer(self, topic_manager: Any) -> dict[str, int]:
+    def record_from_buffer(self, topic_manager: Any) -> Dict[str, int]:
         """
         Copia as novas mensagens do buffer do TopicManager para o armazenamento
         interno, evitando duplicação pelo timestamp.
@@ -322,7 +322,7 @@ class DataRecorder:
                 )
             topics_snapshot = list(self._topics)
 
-        new_counts: dict[str, int] = {t: 0 for t in topics_snapshot}
+        new_counts: Dict[str, int] = {t: 0 for t in topics_snapshot}
 
         for topic in topics_snapshot:
             try:
@@ -346,7 +346,7 @@ class DataRecorder:
                 continue
 
             # Conversão fora do lock — pode demorar para mensagens grandes
-            converted_entries: list[dict[str, Any]] = []
+            converted_entries: List[Dict[str, Any]] = []
             for entry in new_entries:
                 try:
                     msg_dict = convert_ros_message(entry["msg"], include_meta=False)
@@ -386,7 +386,7 @@ class DataRecorder:
     # Exportação
     # ------------------------------------------------------------------
 
-    def save_to_csv(self, output_dir: str) -> dict[str, str]:
+    def save_to_csv(self, output_dir: str) -> Dict[str, str]:
         """
         Exporta os dados gravados para arquivos CSV — um arquivo por tópico.
 
@@ -418,7 +418,7 @@ class DataRecorder:
                     "Nenhuma sessão de gravação foi iniciada. "
                     "Chame start_recording() antes de save_to_csv()."
                 )
-            data_snapshot: dict[str, list] = {
+            data_snapshot: Dict[str, list] = {
                 t: list(entries) for t, entries in self._data.items()
             }
             topics_snapshot = list(self._topics)
@@ -427,7 +427,7 @@ class DataRecorder:
         out_path.mkdir(parents=True, exist_ok=True)
         logger.info("save_to_csv(): diretório de saída: %s", out_path)
 
-        saved_paths: dict[str, str] = {}
+        saved_paths: Dict[str, str] = {}
 
         for topic in topics_snapshot:
             entries = data_snapshot.get(topic, [])
@@ -439,8 +439,8 @@ class DataRecorder:
             filename = topic.lstrip("/").replace("/", "_") + ".csv"
             file_path = out_path / filename
 
-            flat_rows: list[dict[str, Any]] = []
-            all_columns: dict[str, None] = {}
+            flat_rows: List[Dict[str, Any]] = []
+            all_columns: Dict[str, None] = {}
 
             for entry in entries:
                 flat = _flatten_dict(entry["msg_dict"])
@@ -480,7 +480,7 @@ class DataRecorder:
     # Inspeção
     # ------------------------------------------------------------------
 
-    def get_stats(self) -> dict[str, Any]:
+    def get_stats(self) -> Dict[str, Any]:
         """
         Retorna estatísticas da sessão de gravação atual.
 
@@ -513,7 +513,7 @@ def _flatten_dict(
     sep: str = ".",
     _depth: int = 0,
     _max_depth: int = 8,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """
     Aplana um dicionário aninhado em um dicionário plano com chaves compostas.
 

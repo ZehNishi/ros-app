@@ -828,11 +828,11 @@ class DashboardManager {
       <div class="tab-header">
         <h2>${escHtml(title)}</h2>
         <div class="tab-actions">
-          <button class="btn btn-primary" onclick="App.openGpsModal()" style="display:flex; align-items:center; gap:6px;">
+          <button class="btn btn-primary" onclick="App.openGpsModal('${winId}')" style="display:flex; align-items:center; gap:6px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
             Adicionar GPS
           </button>
-          <button class="btn btn-primary" onclick="App.openAddModal()">+ Adicionar Gráfico</button>
+          <button class="btn btn-primary" onclick="App.openAddModal('${winId}')">+ Adicionar Gráfico</button>
           <button class="btn btn-ghost" style="color:var(--red); padding: 0 12px;" onclick="App.deleteWindow('${winId}')" title="Excluir Janela">🗑️</button>
         </div>
       </div>
@@ -1210,7 +1210,8 @@ class DashboardManager {
   }
 
   // ── Modal: Add chart ──────────────────────────────────
-  async openAddModal() {
+  async openAddModal(targetWinId) {
+    if (targetWinId) this._activeWindowId = targetWinId;
     try {
       const res = await fetch('/api/v1/topics');
       if (!res.ok) throw new Error('API request failed');
@@ -1317,7 +1318,8 @@ class DashboardManager {
   }
 
   // ── Modal: Add GPS ──────────────────────────────────
-  async openGpsModal() {
+  async openGpsModal(targetWinId) {
+    if (targetWinId) this._activeWindowId = targetWinId;
     try {
       const res = await fetch('/api/v1/topics');
       if (!res.ok) throw new Error('API request failed');
@@ -1666,9 +1668,9 @@ const dashboard = new DashboardManager(toast);
 
 // Global App namespace (used by inline onclick handlers)
 const App = {
-  openAddModal:       ()       => dashboard.openAddModal(),
+  openAddModal:       (wid)    => dashboard.openAddModal(wid),
   confirmAddModal:    ()       => dashboard.confirmAddModal(),
-  openGpsModal:       ()       => dashboard.openGpsModal(),
+  openGpsModal:       (wid)    => dashboard.openGpsModal(wid),
   confirmGpsModal:    ()       => dashboard.confirmGpsModal(),
   toggleRosMode:      ()       => dashboard.toggleRosMode(),
   confirmConnectROS:  ()       => dashboard.confirmConnectROS(),

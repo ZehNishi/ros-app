@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from typing import Optional
 import os
 import socket
+import concurrent.futures
 from urllib.parse import urlparse
 
 from app.core.config import settings
@@ -115,8 +116,19 @@ def connect_ros(req: ConnectRequest):
         if "ROS_IP" in os.environ:
             del os.environ["ROS_IP"]
 
+    CONNECT_TIMEOUT = 10  # segundos
+
     try:
-        ros_client.init()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(ros_client.init)
+            try:
+                future.result(timeout=CONNECT_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                raise ROSUnavailableError(
+                    f"Timeout ({CONNECT_TIMEOUT}s) ao conectar ao roscore em "
+                    f"{settings.ROS_MASTER_URI}. "
+                    "Verifique se o roscore está rodando e se ROS_MASTER_URI está correto."
+                )
         return {"status": "ok", "message": "Conectado com sucesso."}
     except ROSUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc))

@@ -213,7 +213,7 @@ def list_subscriptions():
 # ---------------------------------------------------------------------------
 
 @router.get(
-    "/topic/{topic_name}/history",
+    "/topic/{topic_name:path}/history",
     response_model=TopicHistoryResponse,
     summary="Histórico de mensagens do buffer",
 )
@@ -336,7 +336,7 @@ def get_topic_history(
 # ---------------------------------------------------------------------------
 
 @router.get(
-    "/topic/{topic_name}/stream",
+    "/topic/{topic_name:path}/stream",
     summary="Stream SSE de mensagens de um tópico ROS",
     response_class=StreamingResponse,
     responses={

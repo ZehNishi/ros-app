@@ -42,6 +42,12 @@ class TopicDetailResponse(BaseModel):
     type: str
 
 
+class TopicFieldsResponse(BaseModel):
+    topic: str
+    type: str
+    fields: List[str]
+
+
 # ---------------------------------------------------------------------------
 # Rotas
 # ---------------------------------------------------------------------------
@@ -71,6 +77,34 @@ def list_topics():
 
     logger.info("GET /topics — %d tópico(s) encontrado(s).", len(topics))
     return TopicsResponse(count=len(topics), topics=topics)
+
+
+@router.get(
+    "/{topic_name:path}/fields",
+    response_model=TopicFieldsResponse,
+    summary="Lista os campos disponíveis de um tópico",
+)
+def get_topic_fields(topic_name: str):
+    """
+    Retorna a lista planificada (notação de ponto) de todos os campos
+    disponíveis na mensagem do tópico.
+
+    Útil para preencher dropdowns no frontend com os dados que podem ser plotados.
+    """
+    if not topic_name.startswith("/"):
+        topic_name = f"/{topic_name}"
+
+    logger.info("GET /topics/%s/fields — consultando schema.", topic_name)
+
+    try:
+        msg_type = ros_client.get_topic_type(topic_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    fields = ros_client.get_message_fields(msg_type)
+    
+    logger.info("GET /topics/%s/fields — %d campos encontrados.", topic_name, len(fields))
+    return TopicFieldsResponse(topic=topic_name, type=msg_type, fields=fields)
 
 
 @router.get(

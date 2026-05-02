@@ -104,8 +104,18 @@ class ROSStatus {
 
       const body = await res.json().catch(() => ({}));
 
-      if (res.ok && (body.status === 'ok' || body.ros_ok === true)) {
-        this._set('connected', 'ROS Conectado');
+      if (res.ok) {
+        if (body.ros_initialized === false) {
+          this.stop();
+          App.showTab('config');
+          return;
+        }
+
+        if (body.status === 'ok' || body.ros_ok === true) {
+          this._set('connected', 'ROS Conectado');
+        } else {
+          this._set('degraded', body.detail || 'ROS Degradado');
+        }
       } else {
         this._set('degraded', body.detail || 'ROS Degradado');
       }
@@ -156,6 +166,11 @@ class ChartWidget {
     this.yMax      = cfg.yMax;
     this._toast    = cfg.toast;
 
+    const cfgCopy = { ...cfg };
+    delete cfgCopy.toast;
+    this._cfg = cfgCopy;
+    this._cfg.type = 'chart';
+
     this.paused      = false;
     this.totalEvents = 0;
 
@@ -175,6 +190,8 @@ class ChartWidget {
     const el = document.createElement('div');
     el.className = 'widget';
     el.id = `w-${this.id}`;
+    el.draggable = true;
+    el.dataset.wid = this.id;
     el.innerHTML = `
       <div class="widget-header">
         <div class="widget-info">
@@ -203,18 +220,24 @@ class ChartWidget {
       </div>
     `;
 
-    const grid = document.getElementById('widget-grid');
-    document.getElementById('empty-dashboard').style.display = 'none';
-    grid.appendChild(el);
     this._el = el;
 
-    document.getElementById(`wpause-${this.id}`)
+    el.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', this.id);
+      setTimeout(() => el.classList.add('dragging'), 0);
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+    });
+
+    this._el.querySelector(`#wpause-${this.id}`)
       .addEventListener('click', () => this.togglePause());
   }
 
   // ── Chart.js ─────────────────────────────────────────
   _initChart() {
-    const canvas = document.getElementById(`wc-${this.id}`);
+    const canvas = this._el.querySelector(`#wc-${this.id}`);
     this._chart  = new Chart(canvas.getContext('2d'), {
       type: 'line',
       data: { labels: [], datasets: [] },
@@ -313,8 +336,8 @@ class ChartWidget {
         this.totalEvents++;
         this._updateStats();
         // Show canvas
-        document.getElementById(`wemp-${this.id}`).style.display = 'none';
-        document.getElementById(`wc-${this.id}`).style.display   = 'block';
+        this._el.querySelector(`#wemp-${this.id}`).style.display = 'none';
+        this._el.querySelector(`#wc-${this.id}`).style.display   = 'block';
       } catch (_) {}
     });
 
@@ -364,7 +387,7 @@ class ChartWidget {
 
   // ── Legend ────────────────────────────────────────────
   _renderLegend() {
-    const el = document.getElementById(`wleg-${this.id}`);
+    const el = this._el.querySelector(`#wleg-${this.id}`);
     el.innerHTML = this._streams.map(s =>
       `<span class="legend-item">
         <span class="legend-swatch" style="background:${escHtml(s.color)}"></span>
@@ -387,12 +410,12 @@ class ChartWidget {
   }
 
   _updateStats() {
-    const el = document.getElementById(`ws-${this.id}`);
+    const el = this._el.querySelector(`#ws-${this.id}`);
     if (el) el.textContent = `${this.totalEvents} eventos · … msg/s`;
   }
 
   _renderStats(hz) {
-    const el = document.getElementById(`ws-${this.id}`);
+    const el = this._el.querySelector(`#ws-${this.id}`);
     if (el) el.textContent = `${this.totalEvents} eventos · ${hz > 0 ? hz.toFixed(1) : '—'} msg/s`;
   }
 
@@ -400,7 +423,7 @@ class ChartWidget {
   togglePause() {
     this.paused = !this.paused;
     this._el.classList.toggle('is-paused', this.paused);
-    const btn = document.getElementById(`wpause-${this.id}`);
+    const btn = this._el.querySelector(`#wpause-${this.id}`);
     if (btn) {
       btn.textContent = this.paused ? '▶' : '⏸';
       btn.classList.toggle('active', this.paused);
@@ -415,8 +438,8 @@ class ChartWidget {
     this.totalEvents = 0;
     this._streams.forEach(s => { s.hzBuffer = []; });
     this._renderStats(0);
-    document.getElementById(`wemp-${this.id}`).style.display = 'flex';
-    document.getElementById(`wc-${this.id}`).style.display   = 'none';
+    this._el.querySelector(`#wemp-${this.id}`).style.display = 'flex';
+    this._el.querySelector(`#wc-${this.id}`).style.display   = 'none';
   }
 
   exportPNG() {
@@ -438,18 +461,483 @@ class ChartWidget {
   }
 }
 
+
+// ─────────────────────────────────────────────────────────
+// GpsWidget — manages a scatter plot for GPS trajectories
+// ─────────────────────────────────────────────────────────
+class GpsWidget {
+  constructor(cfg) {
+    this.id        = cfg.id;
+    this.title     = cfg.title;
+    this.topic     = cfg.topic;
+    this.color     = cfg.color;
+    this._toast    = cfg.toast;
+
+    const cfgCopy = { ...cfg };
+    delete cfgCopy.toast;
+    this._cfg = cfgCopy;
+    this._cfg.type = 'gps';
+
+    this.paused      = false;
+    this.totalEvents = 0;
+
+    this._chart    = null;
+    this._evtSource = null;
+    this._hzBuffer = [];
+    this._hzTimer  = null;
+    this._el       = null;
+    
+    this.connected = false;
+    this.reconnectDelay = 1000;
+    this.reconnectTimer = null;
+    
+    // ENU coordinates state
+    this._origin   = null;
+    this._R        = 6378137; // Earth radius in meters
+
+    this._buildDOM();
+    this._initChart();
+    this._openSSE();
+    this._hzTimer = setInterval(() => this._tickHz(), 1000);
+  }
+
+  // ── DOM ──────────────────────────────────────────────
+  _buildDOM() {
+    const el = document.createElement('div');
+    el.className = 'widget';
+    el.id = `w-${this.id}`;
+    el.innerHTML = `
+      <div class="widget-header">
+        <div class="widget-info">
+          <span class="widget-title">${escHtml(this.title)}</span>
+          <span class="widget-stats" id="ws-${this.id}">0 eventos · — msg/s</span>
+        </div>
+        <div class="widget-actions">
+          <button class="wbtn" id="wpause-${this.id}" title="Pausar/Retomar streaming">⏸</button>
+          <button class="wbtn" title="Limpar dados do gráfico" onclick="App.clearWidget('${this.id}')">🗑</button>
+          <button class="wbtn" title="Exportar PNG" onclick="App.exportWidget('${this.id}')">💾</button>
+          <button class="wbtn danger" title="Remover gráfico" onclick="App.removeWidget('${this.id}')">✕</button>
+        </div>
+      </div>
+      <div class="widget-body">
+        <div class="widget-legend" id="wleg-${this.id}">
+          <span class="legend-item">
+            <span class="legend-swatch" style="background:${escHtml(this.color)}"></span>
+            <span>Trajeto</span>
+            <span class="legend-field">${escHtml(this.topic)} (ENU)</span>
+          </span>
+        </div>
+        <div class="canvas-container">
+          <div class="widget-empty-state" id="wemp-${this.id}">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+            <span>Aguardando sinal GPS…</span>
+          </div>
+          <div class="widget-paused-banner">⏸ Pausado</div>
+          <canvas id="wc-${this.id}" style="display:none"></canvas>
+        </div>
+      </div>
+    `;
+    this._el = el;
+
+    el.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', this.id);
+      setTimeout(() => el.classList.add('dragging'), 0);
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+    });
+
+    this._el.querySelector(`#wpause-${this.id}`).addEventListener('click', () => this.togglePause());
+  }
+
+  // ── Chart.js ─────────────────────────────────────────
+  _initChart() {
+    const canvas = this._el.querySelector(`#wc-${this.id}`);
+    this._chart  = new Chart(canvas.getContext('2d'), {
+      type: 'scatter',
+      data: {
+        datasets: [{
+          label:            'Trajeto',
+          data:             [],
+          borderColor:      this.color,
+          backgroundColor:  this.color + '18',
+          borderWidth:      2,
+          pointRadius:      2,
+          pointHoverRadius: 5,
+          tension:          0.2,
+          showLine:         true,
+          fill:             false,
+        }]
+      },
+      options: {
+        responsive:          true,
+        maintainAspectRatio: false,
+        animation:           false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#161b22', borderColor: '#30363d', borderWidth: 1,
+            titleColor: '#8b949e', bodyColor: '#e6edf3', padding: 10,
+            callbacks: {
+              label: (ctx) => `Leste (X): ${Number(ctx.raw.x).toFixed(2)}m, Norte (Y): ${Number(ctx.raw.y).toFixed(2)}m`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'linear',
+            title: { display: true, text: 'Leste (m)', color: '#8b949e', font: { size: 11 } },
+            ticks: { color: '#8b949e', font: { size: 10 } },
+            grid:  { color: '#1c2128' },
+          },
+          y: {
+            type: 'linear',
+            title: { display: true, text: 'Norte (m)', color: '#8b949e', font: { size: 11 } },
+            ticks: { color: '#8b949e', font: { size: 10 } },
+            grid:  { color: '#1c2128' },
+          },
+        },
+      },
+    });
+  }
+
+  // ── SSE / ENU ─────────────────────────────────────────
+  _openSSE() {
+    if (this._evtSource) this._evtSource.close();
+    
+    const topicName = this.topic.startsWith('/') ? this.topic.slice(1) : this.topic;
+    const url = `/api/v1/topic/${encodeURIComponent(topicName)}/stream?interval=0.1`;
+    
+    const es = new EventSource(url);
+    this._evtSource = es;
+    
+    es.addEventListener('message', (e) => {
+      if (this.paused) return;
+      try {
+        const { data } = JSON.parse(e.data);
+        const lat = toNumber(data.latitude);
+        const lon = toNumber(data.longitude);
+        
+        if (lat === null || lon === null) return;
+        
+        if (!this._origin) {
+          this._origin = { lat: lat * Math.PI/180, lon: lon * Math.PI/180 };
+        }
+        
+        const latRad = lat * Math.PI/180;
+        const lonRad = lon * Math.PI/180;
+        
+        const x = this._R * (lonRad - this._origin.lon) * Math.cos(this._origin.lat);
+        const y = this._R * (latRad - this._origin.lat);
+        
+        this._chart.data.datasets[0].data.push({ x, y });
+        this._chart.update('none');
+        
+        this._hzBuffer.push(Date.now());
+        this.totalEvents++;
+        this._updateStats();
+        
+        this._el.querySelector(`#wemp-${this.id}`).style.display = 'none';
+        this._el.querySelector(`#wc-${this.id}`).style.display   = 'block';
+      } catch (_) {}
+    });
+
+    es.addEventListener('error', (rawE) => {
+      try {
+        const body = JSON.parse(rawE.data || '{}');
+        if (body.error) this._toast.show(`${this.topic}: ${body.error}`, 'error');
+      } catch (_) {}
+    });
+
+    es.onopen = () => {
+      this.connected = true;
+      this.reconnectDelay = 1000;
+      clearTimeout(this.reconnectTimer);
+    };
+
+    es.onerror = () => {
+      if (!this.connected) {
+        this._toast.show(`Falha na conexão SSE para ${this.topic}`, 'error');
+        es.close();
+        return;
+      }
+      this.connected = false;
+      es.close();
+      this._evtSource = null;
+      this.reconnectTimer = setTimeout(
+        () => { if (!this.connected) this._openSSE(); },
+        this.reconnectDelay,
+      );
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_DELAY);
+    };
+  }
+
+  // ── Hz / Stats / Controls ─────────────────────────────
+  _tickHz() {
+    const now = Date.now();
+    const cutoff = now - HZ_WINDOW_SEC * 1000;
+    while (this._hzBuffer && this._hzBuffer.length && this._hzBuffer[0] < cutoff) this._hzBuffer.shift();
+    const hz = (this._hzBuffer ? this._hzBuffer.length : 0) / HZ_WINDOW_SEC;
+    this._renderStats(hz);
+  }
+
+  _updateStats() {
+    const el = this._el.querySelector(`#ws-${this.id}`);
+    if (el) el.textContent = `${this.totalEvents} eventos · … msg/s`;
+  }
+
+  _renderStats(hz) {
+    const el = this._el.querySelector(`#ws-${this.id}`);
+    if (el) el.textContent = `${this.totalEvents} eventos · ${hz > 0 ? hz.toFixed(1) : '—'} msg/s`;
+  }
+
+  togglePause() {
+    this.paused = !this.paused;
+    this._el.classList.toggle('is-paused', this.paused);
+    const btn = this._el.querySelector(`#wpause-${this.id}`);
+    if (btn) {
+      btn.textContent = this.paused ? '▶' : '⏸';
+      btn.classList.toggle('active', this.paused);
+      btn.title = this.paused ? 'Retomar streaming' : 'Pausar streaming';
+    }
+  }
+
+  clear() {
+    this._chart.data.datasets[0].data = [];
+    this._chart.update('none');
+    this.totalEvents = 0;
+    this._hzBuffer = [];
+    this._origin = null; // reset origin
+    this._renderStats(0);
+    this._el.querySelector(`#wemp-${this.id}`).style.display = 'flex';
+    this._el.querySelector(`#wc-${this.id}`).style.display   = 'none';
+  }
+
+  exportPNG() {
+    const a = document.createElement('a');
+    a.href = this._chart.toBase64Image('image/png', 1);
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    a.download = `ros-${this.title.replace(/\s+/g, '-')}-${ts}.png`;
+    a.click();
+  }
+
+  destroy() {
+    clearInterval(this._hzTimer);
+    if (this._evtSource) this._evtSource.close();
+    this._chart.destroy();
+    this._el.remove();
+  }
+}
+
 // ─────────────────────────────────────────────────────────
 // DashboardManager
 // ─────────────────────────────────────────────────────────
 class DashboardManager {
   constructor(toast) {
     this._toast   = toast;
-    this._widgets = new Map();   // id → ChartWidget
+    this._windows = new Map();   // id → { id, title, widgets: Map() }
     this._nextId  = 1;
+    this._nextWinId = 1;
+    this._activeWindowId = null;
+  }
+
+  // ── Tab Management ────────────────────────────────────
+  showTab(tabId) {
+    // Esconde todos
+    document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+
+    if (tabId === 'config') {
+      document.getElementById('tab-config').classList.add('active');
+      document.getElementById('nav-config').classList.add('active');
+      this._activeWindowId = null;
+    } else {
+      const winEl = document.getElementById(`win-${tabId}`);
+      if (winEl) winEl.classList.add('active');
+      const navEl = document.getElementById(`nav-${tabId}`);
+      if (navEl) navEl.classList.add('active');
+      this._activeWindowId = tabId;
+    }
+  }
+
+  // ── Windows Management ────────────────────────────────
+  openNewWindowModal() {
+    document.getElementById('new-window-title').value = '';
+    document.getElementById('modal-new-window').classList.remove('hidden');
+    document.getElementById('new-window-title').focus();
+  }
+
+  confirmNewWindow() {
+    const title = document.getElementById('new-window-title').value.trim();
+    if (!title) {
+      this._toast.show('Digite um nome para a janela', 'warn');
+      return;
+    }
+
+    const winId = `w${this._nextWinId++}`;
+    this._createWindowDOM(winId, title);
+
+    App.closeModal('modal-new-window');
+    this.showTab(winId);
+    this.saveLayout();
+  }
+
+  _createWindowDOM(winId, title) {
+    this._windows.set(winId, {
+      id: winId,
+      title: title,
+      widgets: new Map()
+    });
+
+    // Criar o nav item
+    const navList = document.getElementById('nav-windows');
+    const li = document.createElement('li');
+    li.className = 'nav-item';
+    li.id = `nav-${winId}`;
+    li.style.display = 'flex';
+    li.style.alignItems = 'center';
+    li.style.gap = '8px';
+    li.innerHTML = `
+      <span style="flex:1; overflow:hidden; text-overflow:ellipsis" onclick="App.showTab('${winId}')">${escHtml(title)}</span>
+    `;
+    navList.appendChild(li);
+
+    // Criar o grid container
+    const container = document.getElementById('windows-container');
+    const winPane = document.createElement('div');
+    winPane.id = `win-${winId}`;
+    winPane.className = 'tab-pane';
+    winPane.innerHTML = `
+      <div class="tab-header">
+        <h2>${escHtml(title)}</h2>
+        <div class="tab-actions">
+          <button class="btn btn-primary" onclick="App.openGpsModal()" style="display:flex; align-items:center; gap:6px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+            Adicionar GPS
+          </button>
+          <button class="btn btn-primary" onclick="App.openAddModal()">+ Adicionar Gráfico</button>
+          <button class="btn btn-ghost" style="color:var(--red); padding: 0 12px;" onclick="App.deleteWindow('${winId}')" title="Excluir Janela">🗑️</button>
+        </div>
+      </div>
+      <div class="widget-grid" id="grid-${winId}">
+        <div class="empty-dashboard" id="empty-${winId}">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          <h2>Nenhum gráfico nesta janela</h2>
+          <p>Clique em "+ Adicionar Gráfico" para começar.</p>
+        </div>
+      </div>
+    `;
+    container.appendChild(winPane);
+  }
+
+  deleteWindow(winId) {
+    if (!confirm('Tem certeza que deseja excluir esta janela e todos os seus gráficos?')) return;
+    
+    const win = this._windows.get(winId);
+    if (!win) return;
+    
+    // Destroy all widgets
+    for (const w of win.widgets.values()) {
+      w.destroy();
+    }
+    
+    // Remove DOM
+    document.getElementById(`nav-${winId}`)?.remove();
+    document.getElementById(`win-${winId}`)?.remove();
+    
+    this._windows.delete(winId);
+    
+    if (this._activeWindowId === winId) {
+      this.showTab('config');
+    }
+    this.saveLayout();
+    this._toast.show('Janela excluída.', 'info');
+  }
+
+  // ── Persistence ───────────────────────────────────────
+  saveLayout() {
+    const data = { windows: [] };
+    for (const [winId, win] of this._windows.entries()) {
+      const wData = { id: winId, title: win.title, widgets: [] };
+      for (const widget of win.widgets.values()) {
+        wData.widgets.push(widget._cfg);
+      }
+      data.windows.push(wData);
+    }
+    localStorage.setItem('ros_dashboard_layout', JSON.stringify(data));
+  }
+
+  loadLayout() {
+    const raw = localStorage.getItem('ros_dashboard_layout');
+    if (!raw) return;
+    try {
+      const data = JSON.parse(raw);
+      for (const wData of data.windows || []) {
+        // Handle max win id
+        const nId = parseInt(wData.id.replace('w',''));
+        if (!isNaN(nId)) this._nextWinId = Math.max(this._nextWinId, nId + 1);
+        
+        this._createWindowDOM(wData.id, wData.title);
+        
+        for (const cfg of wData.widgets || []) {
+          const wNId = parseInt(cfg.id);
+          if (!isNaN(wNId)) this._nextId = Math.max(this._nextId, wNId + 1);
+          
+          cfg.toast = this._toast;
+          let widget;
+          if (cfg.type === 'gps') {
+             widget = new GpsWidget(cfg);
+          } else {
+             widget = new ChartWidget(cfg);
+          }
+          const win = this._windows.get(wData.id);
+          win.widgets.set(widget.id, widget);
+          document.getElementById(`grid-${wData.id}`).appendChild(widget._el);
+          
+          // Background re-subscribe
+          if (cfg.type === 'gps') {
+            fetch('/api/v1/subscribe', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({topic: cfg.topic}) }).catch(()=>{});
+          } else if (cfg.datasets) {
+            for (const ds of cfg.datasets) {
+              fetch('/api/v1/subscribe', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({topic: ds.topic}) }).catch(()=>{});
+            }
+          }
+        }
+        this._updateEmptyState(wData.id);
+      }
+    } catch (e) {
+      console.error('Falha ao carregar layout:', e);
+    }
+  }
+
+  _updateEmptyState(winId) {
+    const win = this._windows.get(winId);
+    if (!win) return;
+    const emptyEl = document.getElementById(`empty-${winId}`);
+    if (emptyEl) {
+      emptyEl.style.display = win.widgets.size === 0 ? 'flex' : 'none';
+    }
   }
 
   // ── Modal: Add chart ──────────────────────────────────
-  openAddModal() {
+  async openAddModal() {
+    try {
+      const res = await fetch('/api/v1/topics');
+      if (!res.ok) throw new Error('API request failed');
+      const data = await res.json();
+      // A API retorna { count: X, topics: [...] }
+      this._availableTopics = (data && Array.isArray(data.topics)) ? data.topics : null;
+      if (!this._availableTopics) throw new Error('Formato inesperado');
+    } catch (err) {
+      this._availableTopics = null;
+      this._toast.show('Aviso: Não foi possível carregar os tópicos, ativando modo manual.', 'warn');
+    }
+
     document.getElementById('modal-title').value    = '';
     document.getElementById('modal-ylabel').value   = '';
     document.getElementById('modal-yscale').value   = 'linear';
@@ -466,7 +954,165 @@ class DashboardManager {
     document.getElementById('modal-title').focus();
   }
 
-  confirmAddModal() {
+  // ── Modal: Connection ROS ───────────────────────────
+  toggleRosMode() {
+    const isWifi = document.querySelector('input[name="ros-mode"]:checked').value === 'wifi';
+    const fields = document.getElementById('ros-wifi-fields');
+    if (isWifi) {
+      fields.classList.remove('hidden');
+    } else {
+      fields.classList.add('hidden');
+    }
+  }
+
+  async confirmConnectROS() {
+    const btn = document.getElementById('btn-connect-ros');
+    btn.disabled = true;
+    btn.textContent = 'Conectando...';
+
+    const mode = document.querySelector('input[name="ros-mode"]:checked').value;
+    const masterUri = document.getElementById('ros-master-uri').value.trim();
+    const rosIp = document.getElementById('ros-ip').value.trim();
+
+    try {
+      const res = await fetch('/api/v1/health/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode,
+          master_uri: mode === 'wifi' ? masterUri : null,
+          ros_ip: mode === 'wifi' && rosIp ? rosIp : null
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Falha ao conectar no ROS');
+      }
+
+      this._toast.show('ROS conectado com sucesso!', 'ok');
+      
+      // Reinicia o polling
+      rosStatus.start();
+      btn.textContent = 'Conectado';
+    } catch (err) {
+      this._toast.show(err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Conectar ao ROS';
+    }
+  }
+
+  // ── Auto IP Detection ───────────────────────────────
+  onMasterUriChange() {
+    const isWifi = document.querySelector('input[name="ros-mode"]:checked').value === 'wifi';
+    if (isWifi) this.autoDetectIp();
+  }
+
+  async autoDetectIp() {
+    const masterUri = document.getElementById('ros-master-uri').value.trim();
+    if (!masterUri) return;
+    
+    const inputIp = document.getElementById('ros-ip');
+    inputIp.placeholder = "Detectando...";
+    
+    try {
+      const res = await fetch(`/api/v1/health/detect-ip?target_uri=${encodeURIComponent(masterUri)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.ip) {
+          inputIp.value = data.ip;
+          this._toast.show(`IP local ${data.ip} detectado com sucesso.`, 'info', 3000);
+          return;
+        }
+      }
+      inputIp.placeholder = "Ex: 10.42.0.x";
+    } catch (err) {
+      inputIp.placeholder = "Falha ao detectar";
+    }
+  }
+
+  // ── Modal: Add GPS ──────────────────────────────────
+  async openGpsModal() {
+    try {
+      const res = await fetch('/api/v1/topics');
+      if (!res.ok) throw new Error('API request failed');
+      const data = await res.json();
+      const topics = data.topics || [];
+      const gpsTopics = topics.filter(t => t.type === 'sensor_msgs/NavSatFix');
+      
+      const container = document.getElementById('gps-topic-container');
+      if (gpsTopics.length > 0) {
+        const options = gpsTopics.map(t => 
+          `<option value="${escHtml(t.name)}">${escHtml(t.name)}</option>`
+        ).join('');
+        container.innerHTML = `
+          <select id="modal-gps-topic" class="ds-topic">
+            ${options}
+          </select>`;
+      } else {
+        container.innerHTML = `<input type="text" id="modal-gps-topic" class="ds-topic" placeholder="/fix" autocomplete="off" />`;
+        this._toast.show('Nenhum tópico NavSatFix detectado. Ativando modo manual.', 'info');
+      }
+    } catch (err) {
+      document.getElementById('gps-topic-container').innerHTML = `<input type="text" id="modal-gps-topic" class="ds-topic" placeholder="/fix" autocomplete="off" />`;
+      this._toast.show('Não foi possível carregar os tópicos, ativando modo manual.', 'warn');
+    }
+
+    document.getElementById('modal-gps-title').value = '';
+    document.getElementById('modal-add-gps').classList.remove('hidden');
+    document.getElementById('modal-gps-title').focus();
+  }
+
+  async confirmGpsModal() {
+    const title = document.getElementById('modal-gps-title').value.trim() || `Mapa ${this._nextId}`;
+    const topic = document.getElementById('modal-gps-topic').value.trim();
+    const color = document.getElementById('modal-gps-color').value;
+
+    if (!topic) {
+      this._toast.show('Informe o tópico do GPS.', 'warn');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/v1/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic })
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(`Falha ao subscrever: ${body.detail || 'Erro desconhecido'}`);
+      }
+    } catch (err) {
+      this._toast.show(err.message, 'error');
+      return;
+    }
+
+    const cfg = {
+      id: String(this._nextId++),
+      title,
+      topic,
+      color,
+      toast: this._toast,
+    };
+
+    const w = new GpsWidget(cfg);
+    
+    if (!this._activeWindowId) {
+      this._toast.show('Você precisa criar/selecionar uma janela primeiro!', 'error');
+      return;
+    }
+    const win = this._windows.get(this._activeWindowId);
+    win.widgets.set(w.id, w);
+    document.getElementById(`grid-${this._activeWindowId}`).appendChild(w._el);
+    this._updateEmptyState(this._activeWindowId);
+
+    this.closeModal('modal-add-gps');
+    this._toast.show(`"${title}" criado com sucesso.`, 'ok');
+    this.saveLayout();
+  }
+
+  async confirmAddModal() {
     const title = document.getElementById('modal-title').value.trim()
                   || `Gráfico ${this._nextId}`;
 
@@ -482,6 +1128,24 @@ class DashboardManager {
 
     if (datasets.length === 0) {
       this._toast.show('Informe pelo menos um tópico e campo.', 'warn');
+      return;
+    }
+
+    // Subscribe to all topics before creating the widget
+    try {
+      await Promise.all(datasets.map(async ds => {
+        const res = await fetch('/api/v1/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: ds.topic })
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(`Falha ao subscrever ${ds.topic}: ${body.detail || 'Erro desconhecido'}`);
+        }
+      }));
+    } catch (err) {
+      this._toast.show(err.message, 'error');
       return;
     }
 
@@ -502,9 +1166,18 @@ class DashboardManager {
     };
 
     const widget = new ChartWidget(cfg);
-    this._widgets.set(cfg.id, widget);
+    if (!this._activeWindowId) {
+      this._toast.show('Você precisa criar/selecionar uma janela primeiro!', 'error');
+      return;
+    }
+    const win = this._windows.get(this._activeWindowId);
+    win.widgets.set(widget.id, widget);
+    document.getElementById(`grid-${this._activeWindowId}`).appendChild(widget._el);
+    this._updateEmptyState(this._activeWindowId);
+
     this.closeModal('modal-add');
     this._toast.show(`"${title}" criado com ${datasets.length} curva(s).`, 'ok');
+    this.saveLayout();
   }
 
   // ── Dataset rows ──────────────────────────────────────
@@ -513,6 +1186,19 @@ class DashboardManager {
     const idx      = rows.querySelectorAll('.dataset-row').length;
     const color    = DATASET_COLORS[idx % DATASET_COLORS.length];
     const isFirst  = idx === 0;
+
+    let topicInputHtml = `<input type="text" class="ds-topic" placeholder="/cmd_vel" autocomplete="off" />`;
+    if (this._availableTopics && this._availableTopics.length > 0) {
+      const options = this._availableTopics.map(t => 
+        `<option value="${escHtml(t.name)}">${escHtml(t.name)} (${escHtml(t.type)})</option>`
+      ).join('');
+      topicInputHtml = `<select class="ds-topic">
+        <option value="">-- Selecione --</option>
+        ${options}
+      </select>`;
+    }
+
+    const dlId = `dl-fields-${Date.now()}-${idx}`;
 
     const row = document.createElement('div');
     row.className = 'dataset-row';
@@ -527,14 +1213,15 @@ class DashboardManager {
               Tópico ROS
               <button type="button" class="help-btn" data-help="topic">ℹ️</button>
             </label>
-            <input type="text" class="ds-topic" placeholder="/cmd_vel" autocomplete="off" />
+            ${topicInputHtml}
           </div>
           <div class="form-group">
             <label>
               Campo (Field)
               <button type="button" class="help-btn" data-help="field">ℹ️</button>
             </label>
-            <input type="text" class="ds-field" placeholder="linear.x" autocomplete="off" />
+            <input type="text" class="ds-field" list="${dlId}" placeholder="linear.x" autocomplete="off" title="Use a notação de ponto para navegar na mensagem. Ex: pose.position.x ou data" />
+            <datalist id="${dlId}"></datalist>
           </div>
           <div class="form-group" style="max-width:110px">
             <label>Rótulo</label>
@@ -552,40 +1239,64 @@ class DashboardManager {
       btn.addEventListener('click', () => this.openHelp(btn.dataset.help));
     });
 
+    const topicInput = row.querySelector('.ds-topic');
+    const datalist = row.querySelector('datalist');
+
+    topicInput.addEventListener('change', async (e) => {
+      const topicName = e.target.value.trim();
+      if (!topicName || !datalist) return;
+
+      try {
+        const cleanName = topicName.startsWith('/') ? topicName.slice(1) : topicName;
+        const res = await fetch(`/api/v1/topics/${encodeURIComponent(cleanName)}/fields`);
+        if (!res.ok) throw new Error('API failed');
+        const data = await res.json();
+        datalist.innerHTML = (data.fields || []).map(f => `<option value="${escHtml(f)}">`).join('');
+      } catch (err) {
+        datalist.innerHTML = '';
+      }
+    });
+
     rows.appendChild(row);
     row.querySelector('.ds-topic').focus();
   }
 
   // ── Widget controls ───────────────────────────────────
+  _getWidgetInfo(id) {
+    for (const win of this._windows.values()) {
+      if (win.widgets.has(id)) return { widget: win.widgets.get(id), winId: win.id };
+    }
+    return null;
+  }
+
   clearWidget(id) {
-    const w = this._widgets.get(id);
-    if (!w) return;
-    w.clear();
-    this._toast.show(`Dados de "${w.title}" limpos.`, 'info');
+    const info = this._getWidgetInfo(id);
+    if (!info) return;
+    info.widget.clear();
+    this._toast.show(`Dados de "${info.widget.title}" limpos.`, 'info');
   }
 
   exportWidget(id) {
-    const w = this._widgets.get(id);
-    if (w) w.exportPNG();
+    const info = this._getWidgetInfo(id);
+    if (info) info.widget.exportPNG();
   }
 
   removeWidget(id) {
-    const w = this._widgets.get(id);
-    if (!w) return;
-    const title = w.title;
-    w.destroy();
-    this._widgets.delete(id);
+    const info = this._getWidgetInfo(id);
+    if (!info) return;
+    const title = info.widget.title;
+    info.widget.destroy();
+    this._windows.get(info.winId).widgets.delete(id);
     this._toast.show(`Gráfico "${title}" removido.`, 'info');
-    if (this._widgets.size === 0) {
-      document.getElementById('empty-dashboard').style.display = 'flex';
-    }
+    this._updateEmptyState(info.winId);
+    this.saveLayout();
   }
 
   togglePause(id) {
-    const w = this._widgets.get(id);
-    if (!w) return;
-    w.togglePause();
-    this._toast.show(w.paused ? `"${w.title}" pausado` : `"${w.title}" retomado`, 'info');
+    const info = this._getWidgetInfo(id);
+    if (!info) return;
+    info.widget.togglePause();
+    this._toast.show(info.widget.paused ? `"${info.widget.title}" pausado` : `"${info.widget.title}" retomado`, 'info');
   }
 
   // ── Help modal ────────────────────────────────────────
@@ -672,6 +1383,16 @@ const dashboard = new DashboardManager(toast);
 const App = {
   openAddModal:    ()          => dashboard.openAddModal(),
   confirmAddModal: ()          => dashboard.confirmAddModal(),
+  openGpsModal:    ()          => dashboard.openGpsModal(),
+  confirmGpsModal: ()          => dashboard.confirmGpsModal(),
+  toggleRosMode:   ()          => dashboard.toggleRosMode(),
+  confirmConnectROS: ()        => dashboard.confirmConnectROS(),
+  showTab:         (id)        => dashboard.showTab(id),
+  openNewWindowModal: ()       => dashboard.openNewWindowModal(),
+  confirmNewWindow: ()         => dashboard.confirmNewWindow(),
+  deleteWindow:    (id)        => dashboard.deleteWindow(id),
+  autoDetectIp:    ()          => dashboard.autoDetectIp(),
+  onMasterUriChange: ()        => dashboard.onMasterUriChange(),
   addDatasetRow:   ()          => dashboard._addDatasetRow(),
   clearWidget:     (id)        => dashboard.clearWidget(id),
   exportWidget:    (id)        => dashboard.exportWidget(id),
@@ -684,11 +1405,12 @@ const App = {
 
 document.addEventListener('DOMContentLoaded', () => {
   rosStatus.start();
+  dashboard.loadLayout();
 
   // Global keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      ['modal-add', 'modal-help'].forEach(id => {
+      ['modal-add', 'modal-add-gps', 'modal-help'].forEach(id => {
         document.getElementById(id).classList.add('hidden');
       });
     }

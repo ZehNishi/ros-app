@@ -51,15 +51,8 @@ async def lifespan(app: FastAPI):
         "Iniciando %s v%s...", settings.APP_NAME, settings.APP_VERSION
     )
 
-    try:
-        ros_client.init()
-        logger.info("Nó ROS inicializado com sucesso no startup.")
-    except ROSUnavailableError as exc:
-        logger.warning(
-            "ROS não disponível no startup: %s. "
-            "A API ficará operacional, mas rotas ROS retornarão HTTP 503.",
-            exc,
-        )
+    # Tópicos não serão inicializados aqui. O frontend pedirá configuração.
+    logger.info("Aguardando configuração de conexão ROS do frontend...")
 
     yield
 

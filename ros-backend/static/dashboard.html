@@ -9,47 +9,155 @@
 </head>
 <body>
 
-<!-- ── Header ─────────────────────────────────────────── -->
-<header id="header">
-  <div class="header-brand">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2">
-      <circle cx="12" cy="12" r="10"/>
-      <circle cx="12" cy="12" r="3"/>
-      <line x1="12" y1="2" x2="12" y2="5"/>
-      <line x1="12" y1="19" x2="12" y2="22"/>
-      <line x1="2" y1="12" x2="5" y2="12"/>
-      <line x1="19" y1="12" x2="22" y2="12"/>
-    </svg>
-    <span class="brand-name">ROS Dashboard</span>
-    <span class="brand-sub">Live · SSE · Chart.js</span>
-  </div>
+<div id="app-layout">
+  <!-- ── Sidebar ─────────────────────────────────────────── -->
+  <aside id="sidebar">
+    <div class="sidebar-brand">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <circle cx="12" cy="12" r="3"/>
+        <line x1="12" y1="2" x2="12" y2="5"/>
+        <line x1="12" y1="19" x2="12" y2="22"/>
+        <line x1="2" y1="12" x2="5" y2="12"/>
+        <line x1="19" y1="12" x2="22" y2="12"/>
+      </svg>
+      <span class="brand-name">ROS Dashboard</span>
+    </div>
 
-  <div class="header-spacer"></div>
-
-  <div class="header-right">
     <div class="ros-status" id="ros-status-wrap">
       <div class="ros-dot" id="ros-dot"></div>
       <span id="ros-label">Verificando…</span>
     </div>
-    <button class="btn btn-primary" id="btn-add-chart" onclick="App.openAddModal()">
-      + Adicionar Gráfico
-    </button>
-  </div>
-</header>
 
-<!-- ── Widget Grid ─────────────────────────────────────── -->
-<main id="widget-grid">
-  <div class="empty-dashboard" id="empty-dashboard">
-    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
-      <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-    </svg>
-    <h2>Nenhum gráfico adicionado</h2>
-    <p>Clique em "+ Adicionar Gráfico" para começar a monitorar tópicos ROS em tempo real.</p>
-    <button class="btn btn-primary" style="margin-top:8px" onclick="App.openAddModal()">
-      Adicionar Primeiro Gráfico
-    </button>
+    <div class="sidebar-scroll">
+      <ul class="nav-list">
+        <li class="nav-item active" id="nav-config" onclick="App.showTab('config')">⚙ Configurações</li>
+      </ul>
+
+      <div class="nav-section">
+        <h4>Janelas</h4>
+        <ul class="nav-list" id="nav-windows">
+          <!-- Populated via JS -->
+        </ul>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn btn-ghost" style="flex:1; justify-content:center; padding:6px" onclick="App.openNewWindowModal()">
+            + Janela
+          </button>
+          <button class="btn btn-ghost" style="flex:1; justify-content:center; padding:6px" title="Geração em Lote" onclick="App.openBatchModal()">
+            🪄 Lote
+          </button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main Area ───────────────────────────────────────── -->
+  <main id="main-area">
+
+    <!-- ── Tab: Configuração ───────────────────────────── -->
+    <div id="tab-config" class="tab-pane active">
+      <div class="tab-header">
+        <h2>Configurações de Conexão</h2>
+      </div>
+
+      <div class="config-container">
+        <div class="form-group">
+          <label>Modo de Conexão</label>
+          <div style="display: flex; gap: 16px; margin-top: 8px;">
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+              <input type="radio" name="ros-mode" value="local" checked onchange="App.toggleRosMode()" />
+              <span>Local (localhost)</span>
+            </label>
+            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+              <input type="radio" name="ros-mode" value="wifi" onchange="App.toggleRosMode()" />
+              <span>Rede WiFi (Remoto)</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="ros-wifi-fields" class="hidden" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);">
+          <div class="form-group">
+            <label for="ros-master-uri">Master URL (ROS_MASTER_URI)</label>
+            <input id="ros-master-uri" type="text" value="http://10.42.0.1:11311" placeholder="http://10.42.0.1:11311" oninput="App.onMasterUriChange()" />
+          </div>
+          <div class="form-group" style="margin-top: 16px;">
+            <label for="ros-ip">Seu IP na rede (ROS_IP)</label>
+            <div style="display: flex; gap: 8px;">
+              <input id="ros-ip" type="text" placeholder="Detectando..." style="flex:1" />
+              <button class="btn btn-ghost" onclick="App.autoDetectIp()">Detectar</button>
+            </div>
+            <small style="color:var(--muted); margin-top:4px; display:block">Necessário para que o robô consiga devolver dados ao dashboard.</small>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" onclick="App.confirmConnectROS()" id="btn-connect-ros" style="width: 100%; margin-top: 24px;">Conectar ao ROS</button>
+      </div>
+    </div>
+
+    <!-- ── Tab: Windows Container ──────────────────────── -->
+    <div id="windows-container" style="display:flex; flex:1; flex-direction:column;">
+      <!-- Window content generated dynamically here -->
+    </div>
+
+  </main>
+</div>
+
+<!-- ── Modal: Nova Janela ─────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-new-window" onclick="App.onOverlayClick(event,'modal-new-window')">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Criar Nova Janela</h2>
+      <button class="modal-close" onclick="App.closeModal('modal-new-window')" aria-label="Fechar">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="new-window-title">Nome da Janela</label>
+        <input id="new-window-title" type="text" placeholder="Ex: Motores, Sensores, Câmeras..." />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-new-window')">Cancelar</button>
+      <button class="btn btn-primary" onclick="App.confirmNewWindow()">Criar</button>
+    </div>
   </div>
-</main>
+</div>
+
+<!-- ── Modal: Geração Lote ────────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-batch-window" onclick="App.onOverlayClick(event,'modal-batch-window')">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Geração Automática de Janela</h2>
+      <button class="modal-close" onclick="App.closeModal('modal-batch-window')" aria-label="Fechar">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="batch-window-title">Nome da Nova Janela</label>
+        <input id="batch-window-title" type="text" placeholder="Ex: Motores Esquerda..." />
+      </div>
+      <div class="form-group" style="margin-top:16px;">
+        <label>Modo de Geração</label>
+        <div style="display: flex; gap: 16px; margin-top: 8px;">
+          <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <input type="radio" name="batch-mode" value="exact" checked />
+            <span>Tópico Exato (Ex: /odom)</span>
+          </label>
+          <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <input type="radio" name="batch-mode" value="prefix" />
+            <span>Raiz / Prefixo (Ex: /lux_meter_)</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:16px;">
+        <label for="batch-topic-pattern">Tópico ou Prefixo Alvo</label>
+        <input id="batch-topic-pattern" type="text" placeholder="/odom" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-batch-window')">Cancelar</button>
+      <button class="btn btn-primary" onclick="App.confirmBatchModal()">Gerar Gráficos</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── Modal: Adicionar Gráfico ───────────────────────── -->
 <div class="modal-overlay hidden" id="modal-add" onclick="App.onOverlayClick(event,'modal-add')">
@@ -123,6 +231,42 @@
     </div>
   </div>
 </div>
+
+<!-- ── Modal: Adicionar GPS ───────────────────────────── -->
+<div class="modal-overlay hidden" id="modal-add-gps" onclick="App.onOverlayClick(event,'modal-add-gps')">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Novo Mapa GPS (ENU)</h2>
+      <button class="modal-close" onclick="App.closeModal('modal-add-gps')" aria-label="Fechar">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="form-group">
+        <label for="modal-gps-title">Título do Mapa</label>
+        <input id="modal-gps-title" type="text" placeholder="Ex: Trajeto do Robô" />
+      </div>
+
+      <div class="form-group">
+        <label for="modal-gps-topic">Tópico ROS (NavSatFix)</label>
+        <div id="gps-topic-container">
+          <input type="text" id="modal-gps-topic" class="ds-topic" placeholder="/fix" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="form-group" style="max-width:140px">
+        <label for="modal-gps-color">Cor do Trajeto</label>
+        <input type="color" id="modal-gps-color" value="#39d353" style="width:100%" />
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="App.closeModal('modal-add-gps')">Cancelar</button>
+      <button class="btn btn-primary" onclick="App.confirmGpsModal()">Criar Mapa</button>
+    </div>
+  </div>
+</div>
+
+
 
 <!-- ── Modal: Ajuda ───────────────────────────────────── -->
 <div class="modal-overlay hidden" id="modal-help" onclick="App.onOverlayClick(event,'modal-help')">

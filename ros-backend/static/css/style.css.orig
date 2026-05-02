@@ -202,11 +202,6 @@ body {
 .empty-dashboard {
   grid-column: 1 / -1;
   display: flex;
-.widget.dragging {
-  opacity: 0.5;
-  border: 2px dashed var(--accent);
-}
-
   flex-direction: column;
   align-items: center;
   justify-content: center;

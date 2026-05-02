@@ -300,6 +300,51 @@ class RosClient:
         )
         return topic_type
 
+    def get_message_fields(self, msg_type: str) -> List[str]:
+        """
+        Retorna a lista de campos (schema) em notação de ponto para um tipo de mensagem.
+
+        Inspeciona recursivamente os tipos aninhados usando roslib.message.
+
+        Args:
+            msg_type: Tipo da mensagem (ex. ``'geometry_msgs/Twist'``).
+
+        Returns:
+            List[str]: Lista de caminhos de dados possíveis (ex. ``['linear.x', 'linear.y', ...]``).
+        """
+        self._assert_ready("get_message_fields")
+        
+        try:
+            import roslib.message  # noqa: PLC0415
+        except ImportError as exc:
+            msg = "Módulo roslib não encontrado."
+            logger.error(msg)
+            raise ROSUnavailableError(msg) from exc
+
+        def _get_fields(m_type: str, prefix: str = "") -> List[str]:
+            cls = roslib.message.get_message_class(m_type)
+            if cls is None:
+                return [prefix] if prefix else []
+            
+            fields = []
+            if hasattr(cls, "__slots__") and hasattr(cls, "_slot_types"):
+                for slot_name, slot_type in zip(cls.__slots__, cls._slot_types):
+                    slot_path = f"{prefix}.{slot_name}" if prefix else slot_name
+                    base_type = slot_type.split("[")[0]
+                    
+                    if "/" in base_type:
+                        fields.extend(_get_fields(base_type, slot_path))
+                    elif base_type in ("time", "duration"):
+                        fields.extend([f"{slot_path}.secs", f"{slot_path}.nsecs", f"{slot_path}.total_seconds"])
+                    else:
+                        fields.append(slot_path)
+            else:
+                if prefix:
+                    fields.append(prefix)
+            return fields
+
+        return _get_fields(msg_type)
+
     # ------------------------------------------------------------------
     # Helpers internos
     # ------------------------------------------------------------------

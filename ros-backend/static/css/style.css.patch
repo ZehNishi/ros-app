@@ -1,0 +1,10 @@
+--- /home/jose/ros-app/ros-backend/static/css/style.css
++++ /home/jose/ros-app/ros-backend/static/css/style.css
+@@ -204,2 +204,7 @@
+ 
++.widget.dragging {
++  opacity: 0.5;
++  border: 2px dashed var(--accent);
++}
++
+ /* Empty State */

@@ -1,31 +1,40 @@
 """
-Endpoint de visualização de tópicos ROS via gráfico PNG.
+Endpoints de visualização de tópicos ROS via gráfico PNG.
+
+Rotas (ordem de registro — mais específica primeiro):
+    GET /api/v1/plot/gps/{topic:path}  — trajetória lat/lon
+    GET /api/v1/plot/{topic:path}      — série temporal de campo escalar
+
+GET /api/v1/plot/gps/{topic:path}
+    Parâmetros:
+        topic     — tópico GPS (ex: /fix, /gps/fix)
+        lat_field — campo latitude (padrão: latitude)
+        lon_field — campo longitude (padrão: longitude)
+        limit     — máximo de pontos (padrão: 2000, máximo: 5000)
 
 GET /api/v1/plot/{topic:path}
-
-Parâmetros:
-    topic      — nome do tópico (ex: /chatter, /scan, /imu/data)
-    field      — campo a plotar; suporta notação de ponto (ex: data, header.stamp.secs)
-    limit      — máximo de pontos no gráfico (padrão: 500, máximo: 1000)
-    list_index — se o campo for lista, índice a extrair (ex: 0, 1, -1)
-    list_agg   — se o campo for lista, agregação a aplicar: mean|min|max|sum|first|last
-                 (ignorado se list_index for especificado; padrão: mean)
+    Parâmetros:
+        topic      — nome do tópico (ex: /chatter, /scan, /imu/data)
+        field      — campo a plotar; suporta notação de ponto (ex: data, header.stamp.secs)
+        limit      — máximo de pontos no gráfico (padrão: 500, máximo: 1000)
+        list_index — se o campo for lista, índice a extrair (ex: 0, 1, -1)
+        list_agg   — se o campo for lista, agregação a aplicar: mean|min|max|sum|first|last
 
 Resposta:
-    image/png — gráfico com eixo X = timestamp Unix e eixo Y = valor do campo
+    image/png
 
 Erros:
     HTTP 400 — campo não encontrado em nenhuma mensagem
     HTTP 404 — tópico não subscrito ou buffer vazio
-    HTTP 503 — ROS indisponível (rospy não importável)
+    HTTP 503 — matplotlib/numpy não instalados
 
 Notas de design:
     - Usa matplotlib com backend Agg (sem GUI) — seguro em servidores headless.
     - O gráfico é gerado em memória (io.BytesIO) — nenhum arquivo é escrito em disco.
     - matplotlib e numpy são importados de forma lazy para que o módulo carregue
       mesmo em ambientes sem essas dependências instaladas (retorna HTTP 503).
-    - O FastAPI nunca bloqueia: todo o processamento (get_history, conversão,
-      plot) ocorre de forma síncrona dentro do thread pool do uvicorn.
+    - A rota GPS é registrada ANTES da genérica porque o path converter :path
+      engole tudo, incluindo "gps/algo" — ordem de registro determina precedência.
 """
 
 import io
@@ -45,12 +54,177 @@ router = APIRouter()
 _MAX_POINTS = 1000
 _DEFAULT_LIMIT = 500
 
+# Limite para o plot GPS (trajetórias podem ser muito longas)
+_GPS_MAX_POINTS = 5000
+_GPS_DEFAULT_LIMIT = 2000
+
 # Tipo de agregação para campos lista
 _ListAgg = Literal["mean", "min", "max", "sum", "first", "last"]
 
 
 # ---------------------------------------------------------------------------
-# Rota principal
+# Rota GPS — DEVE ser registrada antes de /plot/{topic:path}
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/plot/gps/{topic:path}",
+    response_class=Response,
+    responses={
+        200: {"content": {"image/png": {}}, "description": "Gráfico de trajetória GPS PNG"},
+        400: {"description": "Campos lat/lon não encontrados ou sem pontos válidos"},
+        404: {"description": "Tópico não subscrito ou buffer vazio"},
+        503: {"description": "matplotlib/numpy não instalados"},
+    },
+    summary="Gera gráfico de trajetória GPS (lat × lon) como PNG",
+    tags=["plot"],
+)
+def get_gps_plot(
+    topic: str,
+    lat_field: Annotated[
+        str,
+        Query(description="Campo da latitude. Suporta notação de ponto (ex: latitude, pose.lat)"),
+    ] = "latitude",
+    lon_field: Annotated[
+        str,
+        Query(description="Campo da longitude. Suporta notação de ponto (ex: longitude, pose.lon)"),
+    ] = "longitude",
+    limit: Annotated[
+        int,
+        Query(ge=1, le=_GPS_MAX_POINTS, description=f"Máximo de pontos (padrão {_GPS_DEFAULT_LIMIT})"),
+    ] = _GPS_DEFAULT_LIMIT,
+):
+    """
+    Plota a trajetória GPS de um tópico ROS como gráfico longitude × latitude.
+
+    Compatível com mensagens ``sensor_msgs/NavSatFix`` (campos ``latitude`` e
+    ``longitude`` no nível raiz) e mensagens customizadas via ``lat_field`` /
+    ``lon_field`` com notação de ponto.
+
+    O gráfico inclui:
+    - Linha contínua da trajetória (azul)
+    - Marcador do ponto inicial (triângulo verde)
+    - Marcador do ponto final (quadrado vermelho)
+    - Contagem de pontos válidos no título
+    - Coordenadas de início e fim na legenda
+
+    Pontos inválidos (None, NaN, ±Inf, lat fora de [-90,90],
+    lon fora de [-180,180]) são ignorados silenciosamente.
+    """
+    if not topic.startswith("/"):
+        topic = f"/{topic}"
+
+    limit = min(limit, _GPS_MAX_POINTS)
+
+    # Importação lazy — falha explícita se libs não estiverem instaladas
+    try:
+        import matplotlib  # noqa: PLC0415
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+    except ImportError as exc:
+        logger.error("matplotlib/numpy não instalados: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"matplotlib e numpy são necessários. Instale: pip install matplotlib numpy  ({exc})",
+        ) from exc
+
+    # ------------------------------------------------------------------
+    # 1. Obtém histórico
+    # ------------------------------------------------------------------
+    try:
+        history = topic_manager.get_history(topic)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tópico '{topic}' não encontrado ou não subscrito: {exc}",
+        ) from exc
+
+    if not history:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Tópico '{topic}' não tem mensagens no buffer. "
+                "Verifique se o tópico está publicando e subscrito via POST /subscribe."
+            ),
+        )
+
+    history = history[-limit:]
+
+    # ------------------------------------------------------------------
+    # 2. Extrai lat / lon de cada mensagem
+    # ------------------------------------------------------------------
+    lats: list[float] = []
+    lons: list[float] = []
+    skipped = 0
+
+    for entry in history:
+        try:
+            msg_dict = convert_ros_message(entry["msg"], include_meta=False)
+        except Exception as exc:
+            logger.debug("get_gps_plot('%s'): erro ao converter msg: %s", topic, exc)
+            skipped += 1
+            continue
+
+        raw_lat = _extract_field(msg_dict, lat_field)
+        raw_lon = _extract_field(msg_dict, lon_field)
+
+        lat = _to_coord(raw_lat)
+        lon = _to_coord(raw_lon)
+
+        if lat is None or lon is None:
+            skipped += 1
+            continue
+
+        # Valida faixas geográficas
+        if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+            logger.debug(
+                "get_gps_plot('%s'): ponto fora de faixa ignorado lat=%.6f lon=%.6f",
+                topic, lat, lon,
+            )
+            skipped += 1
+            continue
+
+        lats.append(lat)
+        lons.append(lon)
+
+    if not lats:
+        # Tenta descobrir campos disponíveis para mensagem de erro útil
+        available = _sample_fields(history[0]["msg"] if history else None)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Nenhum ponto GPS válido extraído de '{topic}' "
+                f"usando lat_field='{lat_field}', lon_field='{lon_field}'. "
+                f"Campos disponíveis na mensagem: {available}. "
+                "Use lat_field/lon_field para apontar os campos corretos."
+            ),
+        )
+
+    if skipped:
+        logger.info(
+            "get_gps_plot('%s'): %d/%d mensagem(ns) ignorada(s) (campos ausentes/inválidos).",
+            topic, skipped, len(history),
+        )
+
+    lat_arr = np.array(lats, dtype=np.float64)
+    lon_arr = np.array(lons, dtype=np.float64)
+
+    # ------------------------------------------------------------------
+    # 3. Renderiza trajetória
+    # ------------------------------------------------------------------
+    png_bytes = _render_gps_plot(plt, np, lat_arr, lon_arr, topic=topic,
+                                 lat_field=lat_field, lon_field=lon_field)
+
+    logger.info(
+        "get_gps_plot('%s'): %d ponto(s) plotado(s) → PNG %d bytes.",
+        topic, len(lats), len(png_bytes),
+    )
+
+    return Response(content=png_bytes, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Rota principal (série temporal)
 # ---------------------------------------------------------------------------
 
 @router.get(
@@ -430,3 +604,172 @@ def _field_display_name(
     if list_index is not None:
         return f"{field}[{list_index}]"
     return field
+
+
+# ---------------------------------------------------------------------------
+# Helpers GPS
+# ---------------------------------------------------------------------------
+
+def _to_coord(raw) -> Optional[float]:
+    """
+    Converte um valor extraído de mensagem ROS para coordenada float.
+
+    Aceita int, float, bool e string numérica.
+    Rejeita None, NaN, ±Inf e tipos não conversíveis.
+
+    Returns:
+        float se válido; None caso contrário.
+    """
+    import math  # noqa: PLC0415
+
+    if raw is None:
+        return None
+
+    if isinstance(raw, bool):
+        return None  # bool é subclasse de int — descarta (True/False não são coord)
+
+    if isinstance(raw, (int, float)):
+        v = float(raw)
+        if math.isnan(v) or math.isinf(v):
+            return None
+        return v
+
+    if isinstance(raw, str):
+        try:
+            v = float(raw)
+            if math.isnan(v) or math.isinf(v):
+                return None
+            return v
+        except ValueError:
+            return None
+
+    return None
+
+
+def _render_gps_plot(
+    plt,
+    np,
+    lat: "np.ndarray",
+    lon: "np.ndarray",
+    *,
+    topic: str,
+    lat_field: str,
+    lon_field: str,
+) -> bytes:
+    """
+    Gera o gráfico de trajetória GPS e retorna os bytes PNG.
+
+    Layout:
+        - Linha contínua azul da trajetória
+        - Triângulo verde no ponto inicial (primeiro ponto registrado)
+        - Quadrado vermelho no ponto final (último ponto registrado)
+        - Grade, aspect igual (para preservar proporção geográfica real)
+        - Coordenadas de início e fim na legenda
+
+    A figura é sempre fechada após o uso para liberar memória.
+    """
+    n = len(lat)
+
+    fig, ax = plt.subplots(figsize=(8, 7), dpi=100)
+
+    try:
+        # ------------------------------------------------------------------
+        # Linha da trajetória
+        # ------------------------------------------------------------------
+        ax.plot(
+            lon, lat,
+            linewidth=1.2,
+            color="#2196F3",
+            alpha=0.8,
+            zorder=2,
+            label=f"Trajetória ({n} pts)",
+        )
+
+        # Gradiente de cor ao longo do tempo usando um scatter colorido
+        if n > 1:
+            scatter = ax.scatter(
+                lon, lat,
+                c=np.arange(n),
+                cmap="Blues",
+                s=4,
+                alpha=0.5,
+                zorder=3,
+                linewidths=0,
+            )
+
+        # ------------------------------------------------------------------
+        # Marcador inicial (triângulo verde ▲)
+        # ------------------------------------------------------------------
+        ax.plot(
+            lon[0], lat[0],
+            marker="^",
+            markersize=10,
+            color="#4CAF50",
+            zorder=5,
+            label=f"Início  ({lat[0]:.6f}, {lon[0]:.6f})",
+            linestyle="None",
+        )
+
+        # ------------------------------------------------------------------
+        # Marcador final (quadrado vermelho ■)
+        # ------------------------------------------------------------------
+        ax.plot(
+            lon[-1], lat[-1],
+            marker="s",
+            markersize=9,
+            color="#F44336",
+            zorder=5,
+            label=f"Fim  ({lat[-1]:.6f}, {lon[-1]:.6f})",
+            linestyle="None",
+        )
+
+        # ------------------------------------------------------------------
+        # Rótulos e formatação
+        # ------------------------------------------------------------------
+        ax.set_xlabel(f"Longitude  [{lon_field}]", fontsize=10)
+        ax.set_ylabel(f"Latitude  [{lat_field}]", fontsize=10)
+
+        # Bounding box para o título
+        lat_span = float(lat.max() - lat.min())
+        lon_span = float(lon.max() - lon.min())
+        ax.set_title(
+            f"{topic}  —  Trajetória GPS\n"
+            f"{n} ponto(s) | "
+            f"Δlat={lat_span:.5f}°  Δlon={lon_span:.5f}°",
+            fontsize=10,
+            fontweight="bold",
+            pad=10,
+        )
+
+        ax.legend(fontsize=8, loc="best", framealpha=0.8)
+        ax.grid(True, linestyle="--", alpha=0.35)
+        ax.tick_params(axis="both", labelsize=8)
+
+        # Proporção igual: 1 grau lat ≈ 1 grau lon visualmente
+        ax.set_aspect("equal", adjustable="datalim")
+
+        # Margem visual ao redor da trajetória
+        margin_lat = lat_span * 0.08 if lat_span > 0 else 0.0001
+        margin_lon = lon_span * 0.08 if lon_span > 0 else 0.0001
+        ax.set_xlim(float(lon.min()) - margin_lon, float(lon.max()) + margin_lon)
+        ax.set_ylim(float(lat.min()) - margin_lat, float(lat.max()) + margin_lat)
+
+        # Formata ticks com 5 casas decimais (precisão ~1 m)
+        ax.xaxis.set_major_formatter(
+            __import__("matplotlib.ticker", fromlist=["FuncFormatter"])
+            .FuncFormatter(lambda v, _: f"{v:.5f}")
+        )
+        ax.yaxis.set_major_formatter(
+            __import__("matplotlib.ticker", fromlist=["FuncFormatter"])
+            .FuncFormatter(lambda v, _: f"{v:.5f}")
+        )
+
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
+        buf.seek(0)
+        return buf.getvalue()
+
+    finally:
+        plt.close(fig)

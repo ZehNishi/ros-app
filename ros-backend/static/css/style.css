@@ -202,11 +202,6 @@ body {
 .empty-dashboard {
   grid-column: 1 / -1;
   display: flex;
-.widget.dragging {
-  opacity: 0.5;
-  border: 2px dashed var(--accent);
-}
-
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -214,6 +209,14 @@ body {
   padding: 100px 24px;
   color: var(--muted);
   text-align: center;
+}
+
+/* Drag and Drop */
+.widget.dragging {
+  opacity: 0.45;
+  border: 2px dashed var(--accent);
+  box-shadow: 0 0 0 3px rgba(88,166,255,.18);
+  background: rgba(88,166,255,.04);
 }
 
 .empty-dashboard svg { opacity: .25; }
@@ -246,7 +249,12 @@ body {
   justify-content: space-between;
   gap: 8px;
   flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
 }
+
+.widget-header:active { cursor: grabbing; }
+.widget.dragging .widget-header { cursor: grabbing; }
 
 .widget-info {
   display: flex;

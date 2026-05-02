@@ -1,0 +1,21 @@
+# ---------------------------------------------------------------------------
+# Dependências Python do projeto
+#
+# Instale com:
+#   pip install -r requirements.txt
+#
+# Nota: rospy NÃO é instalável via pip — ele faz parte do ROS Noetic.
+# Certifique-se de ter o ROS Noetic instalado e executado:
+#   source /opt/ros/noetic/setup.bash
+# antes de rodar a aplicação.
+# ---------------------------------------------------------------------------
+
+# API
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+
+# Configurações via variáveis de ambiente
+pydantic-settings>=2.2.0
+
+# Tipagem e validação
+pydantic>=2.7.0

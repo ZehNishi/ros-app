@@ -19,3 +19,7 @@ pydantic-settings>=2.2.0
 
 # Tipagem e validação
 pydantic>=2.7.0
+
+# Visualização
+matplotlib>=3.8.0
+numpy>=1.24.0

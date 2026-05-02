@@ -23,11 +23,12 @@ Rotas registradas:
     POST /api/v1/recording/stop         — para sessão de gravação
     POST /api/v1/recording/save         — exporta dados para CSV
     GET  /api/v1/recording/status       — estado atual da gravação
+    GET  /api/v1/plot/{topic}           — gráfico PNG de campo de tópico ROS
 """
 
 from fastapi import APIRouter
 
-from app.api.endpoints import health, topics, subscriptions, recording
+from app.api.endpoints import health, topics, subscriptions, recording, plot
 from app.api.routes_files import router as files_router
 from app.api.routes_system import router as system_router
 
@@ -39,3 +40,4 @@ api_router.include_router(subscriptions.router, prefix="",              tags=["s
 api_router.include_router(files_router,         prefix="",              tags=["files"])
 api_router.include_router(system_router,        prefix="",              tags=["system"])
 api_router.include_router(recording.router,     prefix="/recording",    tags=["recording"])
+api_router.include_router(plot.router,          prefix="",              tags=["plot"])

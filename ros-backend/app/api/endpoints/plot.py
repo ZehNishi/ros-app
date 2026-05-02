@@ -516,8 +516,8 @@ def get_plot(
     # ------------------------------------------------------------------
     # 2. Converte e extrai o campo desejado
     # ------------------------------------------------------------------
-    timestamps: list[float] = []
-    values: list[float] = []
+    timestamps: List[float] = []
+    values: List[float] = []
     extraction_errors = 0
 
     for entry in history:

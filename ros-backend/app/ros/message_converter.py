@@ -28,7 +28,7 @@ Metadados opcionais (include_meta=True):
 """
 
 import time
-from typing import Any
+from typing import Any, List
 
 from app.core.logging import get_logger
 
@@ -220,7 +220,7 @@ def _convert_ros_slots(msg: Any, depth: int) -> dict:
         dict com todos os campos convertidos.
     """
     result: dict = {}
-    slots: list[str] = getattr(msg, "__slots__", [])
+    slots: List[str] = getattr(msg, "__slots__", [])
 
     for field_name in slots:
         try:

@@ -80,13 +80,13 @@ class DataRecorder:
         self._lock: threading.Lock = threading.Lock()
 
         self._recording: bool = False
-        self._topics: list[str] = []
+        self._topics: List[str] = []
 
-        # { topic_name: list[{"timestamp": float, "msg_dict": dict}] }
-        self._data: dict[str, list[dict[str, Any]]] = {}
+        # { topic_name: List[{"timestamp": float, "msg_dict": dict}] }
+        self._data: Dict[str, List[Dict[str, Any]]] = {}
 
         # Rastreia o último timestamp gravado por tópico (deduplicação).
-        self._last_timestamps: dict[str, float] = {}
+        self._last_timestamps: Dict[str, float] = {}
 
         # Thread de background e evento de parada.
         self._thread: Optional[threading.Thread] = None
@@ -530,7 +530,7 @@ def _flatten_dict(
     if not isinstance(d, dict):
         return {parent_key: _to_scalar(d)} if parent_key else {}
 
-    items: dict[str, Any] = {}
+    items: Dict[str, Any] = {}
     for key, value in d.items():
         new_key = f"{parent_key}{sep}{key}" if parent_key else key
 

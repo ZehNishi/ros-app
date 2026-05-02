@@ -12,6 +12,7 @@ Rotas registradas:
     POST /api/v1/unsubscribe            — cancela subscrição
     GET  /api/v1/subscriptions          — lista subscrições ativas
     GET  /api/v1/topic/{name}/history   — histórico do buffer de um tópico
+    GET  /api/v1/topic/{name}/stream    — stream SSE de mensagens em tempo real
     GET  /api/v1/topic/{name}           — última mensagem de um tópico
     GET  /api/v1/files?path=            — lista arquivos/diretórios no workspace
     GET  /api/v1/file?path=             — lê conteúdo de arquivo

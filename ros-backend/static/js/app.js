@@ -1266,9 +1266,13 @@ class DashboardManager {
     const masterUri = document.getElementById('ros-master-uri').value.trim();
     const rosIp = document.getElementById('ros-ip').value.trim();
 
+    const ctrl = new AbortController();
+    const abortTimer = setTimeout(() => ctrl.abort(), 12000);
+
     try {
       const res = await fetch('/api/v1/health/connect', {
         method: 'POST',
+        signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode,
@@ -1276,6 +1280,7 @@ class DashboardManager {
           ros_ip: mode === 'wifi' && rosIp ? rosIp : null
         })
       });
+      clearTimeout(abortTimer);
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -1288,7 +1293,11 @@ class DashboardManager {
       rosStatus.start();
       btn.textContent = 'Conectado';
     } catch (err) {
-      this._toast.show(err.message, 'error');
+      clearTimeout(abortTimer);
+      const msg = err.name === 'AbortError'
+        ? 'Timeout: roscore não respondeu em 12s. Verifique se o roscore está rodando em http://localhost:11311'
+        : err.message;
+      this._toast.show(msg, 'error');
       btn.disabled = false;
       btn.textContent = 'Conectar ao ROS';
     }

@@ -23,6 +23,8 @@ Rotas registradas:
     POST /api/v1/recording/stop         — para sessão de gravação
     POST /api/v1/recording/save         — exporta dados para CSV
     GET  /api/v1/recording/status       — estado atual da gravação
+    GET  /api/v1/plot/gps/compare       — múltiplas trajetórias GPS sobrepostas
+    GET  /api/v1/plot/gps/{topic}       — trajetória GPS única (lat × lon)
     GET  /api/v1/plot/{topic}           — gráfico PNG de campo de tópico ROS
 """
 

@@ -2,7 +2,8 @@
 Endpoints de visualização de tópicos ROS via gráfico PNG.
 
 Rotas (ordem de registro — mais específica primeiro):
-    GET /api/v1/plot/gps/{topic:path}  — trajetória lat/lon
+    GET /api/v1/plot/gps/compare       — múltiplas trajetórias sobrepostas
+    GET /api/v1/plot/gps/{topic:path}  — trajetória única lat/lon
     GET /api/v1/plot/{topic:path}      — série temporal de campo escalar
 
 GET /api/v1/plot/gps/{topic:path}
@@ -63,7 +64,194 @@ _ListAgg = Literal["mean", "min", "max", "sum", "first", "last"]
 
 
 # ---------------------------------------------------------------------------
-# Rota GPS — DEVE ser registrada antes de /plot/{topic:path}
+# Rota GPS compare — DEVE ser registrada antes de /plot/gps/{topic:path}
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/plot/gps/compare",
+    response_class=Response,
+    responses={
+        200: {"content": {"image/png": {}}, "description": "Gráfico PNG com múltiplas trajetórias"},
+        400: {"description": "Nenhum tópico retornou pontos válidos"},
+        422: {"description": "Parâmetro 'topics' ausente ou malformado"},
+        503: {"description": "matplotlib/numpy não instalados"},
+    },
+    summary="Sobrepõe múltiplas trajetórias GPS no mesmo gráfico",
+    tags=["plot"],
+)
+def get_gps_compare(
+    topics: Annotated[
+        str,
+        Query(
+            description=(
+                "Tópicos separados por vírgula. "
+                "Ex: topics=/fix1,/fix2,/fix3"
+            )
+        ),
+    ],
+    lat_field: Annotated[
+        str,
+        Query(description="Campo da latitude para todos os tópicos (notação de ponto)"),
+    ] = "latitude",
+    lon_field: Annotated[
+        str,
+        Query(description="Campo da longitude para todos os tópicos (notação de ponto)"),
+    ] = "longitude",
+    limit: Annotated[
+        int,
+        Query(ge=1, le=_GPS_MAX_POINTS, description=f"Máximo de pontos por tópico (padrão {_GPS_DEFAULT_LIMIT})"),
+    ] = _GPS_DEFAULT_LIMIT,
+    show_markers: Annotated[
+        bool,
+        Query(description="Marcar ponto inicial (▲) e final (■) de cada trajetória"),
+    ] = True,
+):
+    """
+    Plota múltiplas trajetórias GPS sobrepostas no mesmo gráfico.
+
+    Cada tópico recebe uma cor distinta da paleta ``tab10`` do matplotlib.
+    Tópicos sem dados ou sem campos lat/lon válidos são ignorados com aviso
+    no log — o gráfico é gerado com os tópicos restantes.
+
+    O parâmetro ``topics`` aceita nomes separados por vírgula, com ou sem
+    espaço, com ou sem ``/`` inicial::
+
+        topics=/fix1,/fix2,/fix3
+        topics=fix1, fix2, fix3   (normalizado automaticamente)
+
+    O gráfico retorna HTTP 400 apenas se **nenhum** tópico produziu pontos
+    válidos.
+
+    Raises:
+        HTTP 400  — todos os tópicos estavam vazios ou sem campos válidos.
+        HTTP 422  — parâmetro ``topics`` ausente.
+        HTTP 503  — matplotlib/numpy não instalados.
+    """
+    # ------------------------------------------------------------------
+    # Parse e normalização da lista de tópicos
+    # ------------------------------------------------------------------
+    topic_list = [
+        (t.strip() if t.strip().startswith("/") else f"/{t.strip()}")
+        for t in topics.split(",")
+        if t.strip()
+    ]
+    if not topic_list:
+        raise HTTPException(
+            status_code=422,
+            detail="O parâmetro 'topics' está vazio. Informe ao menos um tópico.",
+        )
+    # Remove duplicatas preservando ordem
+    seen: dict[str, None] = {}
+    for t in topic_list:
+        seen[t] = None
+    topic_list = list(seen.keys())
+
+    limit = min(limit, _GPS_MAX_POINTS)
+
+    # ------------------------------------------------------------------
+    # Importação lazy
+    # ------------------------------------------------------------------
+    try:
+        import matplotlib  # noqa: PLC0415
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+        import numpy as np  # noqa: PLC0415
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"matplotlib e numpy são necessários. Instale: pip install matplotlib numpy  ({exc})",
+        ) from exc
+
+    # ------------------------------------------------------------------
+    # Coleta de dados por tópico
+    # ------------------------------------------------------------------
+    # { topic: {"lats": np.ndarray, "lons": np.ndarray} }
+    trajectories: dict[str, dict] = {}
+    skipped_topics: list[str] = []
+
+    for topic in topic_list:
+        try:
+            history = topic_manager.get_history(topic)
+        except Exception as exc:
+            logger.warning("compare: tópico '%s' não encontrado: %s", topic, exc)
+            skipped_topics.append(topic)
+            continue
+
+        if not history:
+            logger.warning("compare: tópico '%s' sem mensagens no buffer.", topic)
+            skipped_topics.append(topic)
+            continue
+
+        history = history[-limit:]
+
+        lats: list[float] = []
+        lons: list[float] = []
+        for entry in history:
+            try:
+                msg_dict = convert_ros_message(entry["msg"], include_meta=False)
+            except Exception:
+                continue
+
+            lat = _to_coord(_extract_field(msg_dict, lat_field))
+            lon = _to_coord(_extract_field(msg_dict, lon_field))
+
+            if lat is None or lon is None:
+                continue
+            if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+                continue
+
+            lats.append(lat)
+            lons.append(lon)
+
+        if not lats:
+            logger.warning(
+                "compare: tópico '%s' sem pontos válidos (lat_field='%s', lon_field='%s').",
+                topic, lat_field, lon_field,
+            )
+            skipped_topics.append(topic)
+            continue
+
+        trajectories[topic] = {
+            "lats": np.array(lats, dtype=np.float64),
+            "lons": np.array(lons, dtype=np.float64),
+        }
+        logger.info("compare: tópico '%s' — %d ponto(s) válido(s).", topic, len(lats))
+
+    if skipped_topics:
+        logger.warning("compare: %d tópico(s) ignorado(s): %s", len(skipped_topics), skipped_topics)
+
+    if not trajectories:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Nenhum dos tópicos {topic_list} retornou pontos GPS válidos. "
+                f"Campos usados: lat_field='{lat_field}', lon_field='{lon_field}'. "
+                "Verifique se os tópicos estão subscritos e publicando."
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # Renderização
+    # ------------------------------------------------------------------
+    png_bytes = _render_compare_plot(
+        plt, np,
+        trajectories=trajectories,
+        skipped=skipped_topics,
+        lat_field=lat_field,
+        lon_field=lon_field,
+        show_markers=show_markers,
+    )
+
+    logger.info(
+        "get_gps_compare: %d trajetória(s) → PNG %d bytes.",
+        len(trajectories), len(png_bytes),
+    )
+
+    return Response(content=png_bytes, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# Rota GPS única — DEVE ser registrada antes de /plot/{topic:path}
 # ---------------------------------------------------------------------------
 
 @router.get(
@@ -763,6 +951,171 @@ def _render_gps_plot(
             __import__("matplotlib.ticker", fromlist=["FuncFormatter"])
             .FuncFormatter(lambda v, _: f"{v:.5f}")
         )
+
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", dpi=100)
+        buf.seek(0)
+        return buf.getvalue()
+
+    finally:
+        plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Helper de renderização — comparação de múltiplas trajetórias
+# ---------------------------------------------------------------------------
+
+def _render_compare_plot(
+    plt,
+    np,
+    *,
+    trajectories: dict,
+    skipped: list[str],
+    lat_field: str,
+    lon_field: str,
+    show_markers: bool,
+) -> bytes:
+    """
+    Renderiza múltiplas trajetórias GPS sobrepostas numa única figura.
+
+    Cada tópico recebe uma cor da paleta ``tab10`` (10 cores distintas);
+    para mais de 10 tópicos a paleta faz ciclo automaticamente.
+
+    Marcadores opcionais por trajetória (quando ``show_markers=True``):
+        ▲  início — cor da trajetória, mais escura
+        ■  fim    — cor da trajetória, mais escura
+
+    O bounding-box é calculado sobre todos os pontos de todos os tópicos
+    para garantir que nenhuma trajetória fique fora da área visível.
+
+    A figura é sempre fechada via ``finally`` para liberar memória.
+    """
+    import matplotlib.ticker as ticker  # noqa: PLC0415
+
+    n_topics = len(trajectories)
+    # tab10 tem 10 cores; para >10 tópicos usa tab20 (20 cores)
+    cmap_name = "tab10" if n_topics <= 10 else "tab20"
+    cmap = plt.get_cmap(cmap_name)
+    colors = [cmap(i % cmap.N) for i in range(n_topics)]
+
+    fig, ax = plt.subplots(figsize=(9, 8), dpi=100)
+
+    try:
+        all_lats: list[float] = []
+        all_lons: list[float] = []
+
+        for idx, (topic, data) in enumerate(trajectories.items()):
+            lat = data["lats"]
+            lon = data["lons"]
+            color = colors[idx]
+            n = len(lat)
+
+            all_lats.extend(lat.tolist())
+            all_lons.extend(lon.tolist())
+
+            # ---- Linha da trajetória ----
+            short_name = topic.lstrip("/")
+            ax.plot(
+                lon, lat,
+                linewidth=1.4,
+                color=color,
+                alpha=0.85,
+                zorder=2 + idx * 0.1,
+                label=f"{short_name}  ({n} pts)",
+            )
+
+            # ---- Pontos ao longo da linha (apenas datasets pequenos) ----
+            if n <= 300:
+                ax.scatter(
+                    lon, lat,
+                    s=5,
+                    color=color,
+                    alpha=0.5,
+                    zorder=3 + idx * 0.1,
+                    linewidths=0,
+                )
+
+            if show_markers:
+                # ---- Marcador inicial ▲ ----
+                ax.plot(
+                    lon[0], lat[0],
+                    marker="^",
+                    markersize=9,
+                    color=color,
+                    markeredgecolor="white",
+                    markeredgewidth=0.6,
+                    zorder=6,
+                    linestyle="None",
+                    label=f"  ▲ início  ({lat[0]:.5f}, {lon[0]:.5f})",
+                )
+                # ---- Marcador final ■ ----
+                ax.plot(
+                    lon[-1], lat[-1],
+                    marker="s",
+                    markersize=8,
+                    color=color,
+                    markeredgecolor="white",
+                    markeredgewidth=0.6,
+                    zorder=6,
+                    linestyle="None",
+                    label=f"  ■ fim      ({lat[-1]:.5f}, {lon[-1]:.5f})",
+                )
+
+        # ------------------------------------------------------------------
+        # Bounding box global + margens
+        # ------------------------------------------------------------------
+        lat_arr = np.array(all_lats)
+        lon_arr = np.array(all_lons)
+        lat_span = float(lat_arr.max() - lat_arr.min())
+        lon_span = float(lon_arr.max() - lon_arr.min())
+        margin_lat = lat_span * 0.08 if lat_span > 0 else 0.0001
+        margin_lon = lon_span * 0.08 if lon_span > 0 else 0.0001
+        ax.set_xlim(float(lon_arr.min()) - margin_lon, float(lon_arr.max()) + margin_lon)
+        ax.set_ylim(float(lat_arr.min()) - margin_lat, float(lat_arr.max()) + margin_lat)
+
+        # ------------------------------------------------------------------
+        # Aviso de tópicos ignorados (faixa de texto no gráfico)
+        # ------------------------------------------------------------------
+        if skipped:
+            warn_text = f"Ignorado(s): {', '.join(s.lstrip('/') for s in skipped)}"
+            ax.text(
+                0.01, 0.01, warn_text,
+                transform=ax.transAxes,
+                fontsize=7,
+                color="#B71C1C",
+                verticalalignment="bottom",
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7),
+            )
+
+        # ------------------------------------------------------------------
+        # Rótulos, título, grade
+        # ------------------------------------------------------------------
+        ax.set_xlabel(f"Longitude  [{lon_field}]", fontsize=10)
+        ax.set_ylabel(f"Latitude  [{lat_field}]", fontsize=10)
+        ax.set_title(
+            f"Comparação de Trajetórias GPS  —  {n_topics} tópico(s)\n"
+            f"Δlat={lat_span:.5f}°  Δlon={lon_span:.5f}°",
+            fontsize=10,
+            fontweight="bold",
+            pad=10,
+        )
+
+        ax.legend(
+            fontsize=7,
+            loc="best",
+            framealpha=0.85,
+            # Evita legenda enorme com marcadores: apenas entradas de trajetória
+            # quando show_markers=False; com show_markers mostra tudo
+        )
+        ax.grid(True, linestyle="--", alpha=0.35)
+        ax.tick_params(axis="both", labelsize=8)
+        ax.set_aspect("equal", adjustable="datalim")
+
+        # Ticks com 5 casas decimais (~1 m de precisão)
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:.5f}"))
+        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:.5f}"))
 
         fig.tight_layout()
 

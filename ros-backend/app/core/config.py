@@ -10,6 +10,8 @@ Exemplo de .env:
     LOG_LEVEL=DEBUG
 """
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 
 
@@ -25,6 +27,18 @@ class Settings(BaseSettings):
     # --- ROS ---
     ROS_MASTER_URI: str = "http://localhost:11311"
     ROS_NODE_NAME: str = "fastapi_ros_node"
+
+    # --- Sistema de arquivos ---
+    # Diretório raiz permitido para leitura/escrita de arquivos.
+    # Sobrescreva via variável de ambiente FILES_BASE_PATH ou no .env.
+    # Exemplo: FILES_BASE_PATH=/home/usuario/catkin_ws
+    FILES_BASE_PATH: Path = Path.home() / "catkin_ws"
+
+    # Tamanho máximo de leitura de arquivo (bytes). Padrão: 1 MB.
+    FILES_MAX_READ_BYTES: int = 1 * 1024 * 1024
+
+    # Tamanho máximo de escrita de arquivo (bytes). Padrão: 1 MB.
+    FILES_MAX_WRITE_BYTES: int = 1 * 1024 * 1024
 
     # --- Logging ---
     LOG_LEVEL: str = "INFO"

@@ -1,0 +1,31 @@
+Atue como um Engenheiro de Frontend Sênior. Sua tarefa agora é reescrever e expandir completamente o nosso dashboard web (`static/dashboard.html`), transformando-o em uma interface profissional, modular e escalável para visualização de dados do ROS em tempo real.
+
+O backend em FastAPI e a arquitetura de streaming SSE (`/api/v1/topic/{name}/stream`) já estão prontos e funcionais. Mantenha o uso de HTML, CSS e JavaScript puros (sem React/Vue) para facilitar o deploy estático, utilizando Chart.js para os gráficos.
+
+Implemente as seguintes funcionalidades e requisitos arquiteturais:
+
+1. LAYOUT PROFISSIONAL E MODULAR:
+- Crie um layout moderno, responsivo e com um "Dark Mode" elegante (cores que não cansem os olhos em ambientes de monitoramento).
+- Adicione uma barra lateral (Sidebar) ou menu superior com configurações e status.
+- A área principal deve ser um "Grid Dinâmico" onde o usuário pode adicionar, redimensionar ou remover múltiplos "Widgets" (Gráficos).
+
+2. SISTEMA DE GRÁFICOS AVANÇADO (CHART.JS):
+- Adicionar Múltiplos Plots: O usuário deve ter um botão "Adicionar Novo Gráfico". Cada gráfico criado será uma instância independente na tela.
+- Múltiplas Curvas (Datasets) no mesmo Plot: Dentro de um gráfico, o usuário deve poder adicionar múltiplas curvas. Ex: visualizar `linear.x` e `angular.z` do tópico `/cmd_vel` no mesmo gráfico.
+- Edição de Eixos (X e Y):
+  - O eixo X deve ser configurável, tendo o "timestamp" da mensagem como padrão absoluto.
+  - O usuário deve poder rotular o eixo Y e ajustar escalas (ex: linear, logarítmica ou definir limites min/max).
+- Botões de ação em cada gráfico: Pausar visualização, limpar dados da tela, e remover o gráfico.
+
+3. CONEXÃO COM O ROS E STATUS GERAL:
+- Crie um indicador visual claro na barra de navegação principal (ex: um semáforo ou ícone pulsante) que puxe o status da rota `/api/v1/health/ros` periodicamente.
+- Se a conexão cair, a interface deve alertar visualmente, mas tentar reconexão com backoff exponencial.
+
+4. UX, "HOW-TO" E TRATAMENTO DE ERROS:
+- Crie tooltips de ajuda ou ícones de informação (ℹ️) ao lado de configurações complexas. Por exemplo, ao preencher o campo de "Caminho do Dado (Field)", inclua um How-To rápido em modal ou tooltip explicando: "Use notação de ponto para acessar sub-campos. Ex: pose.pose.position.x".
+- Tratamento de Erros Graceful: Em vez de falhar silenciosamente, capture erros de SSE, tópicos inexistentes ou nós ROS offline e exiba "Toast Notifications" (notificações flutuantes no canto da tela) com o erro claro.
+
+5. CÓDIGO LIMPO E ORGANIZADO:
+- Como o arquivo HTML vai crescer, separe o CSS e o JS em arquivos diferentes se julgar necessário (ex: `static/css/style.css` e `static/js/app.js`), e atualize as referências. Use módulos JS ES6 ou classes de gerenciamento (ex: `class ChartManager`, `class ROSConnection`) para não virar um código espaguete.
+
+Por favor, forneça o código completo e as instruções de onde colocar cada arquivo no diretório `static/`.

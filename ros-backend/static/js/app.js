@@ -115,17 +115,17 @@ class ROSStatus {
         if (body.status === 'ok' || body.ros_ok === true) {
           this._set('connected', 'ROS Conectado');
         } else {
-          // roscore caiu após a inicialização — redireciona para config uma
-          // única vez (na transição), mas mantém o polling ativo para detectar
-          // quando o servidor Python for reiniciado.
-          const wasOk = this._state === 'connected';
+          // roscore caiu ou nó degradado: para o polling e volta para config
+          // para o usuário poder reiniciar o servidor Python e reconectar.
+          const wasOk = this._state !== 'degraded';
+          this.stop();
           this._set('degraded', 'ROS Offline');
+          App.showTab('config');
           if (wasOk) {
             this._toast.show(
-              'O roscore ficou offline. Reinicie o servidor Python e clique em Conectar.',
+              'ROS offline. Reinicie o servidor Python e clique em Conectar.',
               'error'
             );
-            App.showTab('config');
           }
         }
       } else {

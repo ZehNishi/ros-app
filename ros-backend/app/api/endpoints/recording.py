@@ -1,18 +1,21 @@
 """
 Endpoints para controle do DataRecorder.
 
-POST /api/v1/recording/start    — inicia sessão de gravação
-POST /api/v1/recording/stop     — para sessão de gravação
+POST /api/v1/recording/start    — inicia sessão de gravação (thread background automática)
+POST /api/v1/recording/stop     — para sessão e aguarda thread encerrar (join)
 POST /api/v1/recording/save     — exporta dados para CSV
 GET  /api/v1/recording/status   — estado atual da gravação
 
-O DataRecorder armazena mensagens em memória (convertidas via message_converter)
-e exporta para CSV sob demanda. Os tópicos devem estar subscritos no TopicManager
-antes de iniciar a gravação.
+A partir da versão com background thread, ``start_recording()`` dispara
+automaticamente uma thread daemon que chama ``record_from_buffer()`` a cada
+``RECORD_INTERVAL`` segundos (padrão 0.2s). Nenhum polling externo é necessário.
 
-Para alimentar o recorder com mensagens novas, chame periodicamente
-``data_recorder.record_from_buffer(topic_manager)`` a partir de um
-background task ou da própria aplicação.
+Fluxo:
+    POST /recording/start   → thread background inicia
+    GET  /recording/status  → counts atualizam em tempo real
+    POST /recording/save    → snapshot parcial (gravação continua)
+    POST /recording/stop    → thread encerra, dados ficam em memória
+    POST /recording/save    → exporta tudo
 """
 
 from fastapi import APIRouter, HTTPException
@@ -73,6 +76,7 @@ class SaveRecordingResponse(BaseModel):
 
 class RecordingStatusResponse(BaseModel):
     recording: bool
+    thread_running: bool
     topics: list[str]
     counts: dict[str, int]
     total_entries: int
@@ -142,10 +146,15 @@ def start_recording(body: StartRecordingRequest):
 )
 def stop_recording():
     """
-    Encerra a sessão de gravação ativa.
+    Encerra a sessão de gravação ativa e aguarda a thread de background finalizar.
 
-    Os dados já coletados permanecem em memória e podem ser exportados
-    via ``POST /recording/save``. Se não houver sessão ativa, retorna
+    A thread de background recebe sinal de parada e é joined antes de retornar
+    — garantindo que não há coleta parcial em andamento quando o endpoint responde.
+    Antes de sinalizar a parada, faz uma última coleta manual para capturar
+    mensagens que chegaram entre o último ciclo da thread e este instante.
+
+    Os dados coletados permanecem em memória e podem ser exportados via
+    ``POST /recording/save``. Se não houver sessão ativa, retorna
     ``status: "not_recording"`` sem erro (idempotente).
     """
     logger.info("POST /recording/stop chamado.")
@@ -158,15 +167,14 @@ def stop_recording():
             total_entries=0,
         )
 
-    # Coleta dados pendentes do buffer antes de parar
+    # Flush manual: captura mensagens que chegaram desde o último ciclo da thread
     try:
         counts = data_recorder.record_from_buffer(topic_manager)
-        logger.info(
-            "Coleta final antes do stop: %s", counts
-        )
+        logger.info("Flush final antes do stop: %s", counts)
     except Exception as exc:
-        logger.warning("Erro na coleta final antes do stop: %s", exc)
+        logger.warning("Erro no flush final antes do stop: %s", exc)
 
+    # Para a gravação e faz join na thread (bloqueante até a thread encerrar)
     data_recorder.stop_recording()
     stats = data_recorder.get_stats()
     total = stats["total_entries"]
@@ -258,30 +266,24 @@ def recording_status():
     """
     Retorna o estado atual do DataRecorder.
 
-    Realiza uma coleta incremental do buffer antes de responder, para que
-    ``counts`` reflita o número mais atualizado possível de entradas.
+    A thread de background atualiza os contadores continuamente enquanto a
+    gravação estiver ativa — este endpoint apenas lê o estado em memória,
+    sem fazer coleta adicional nem bloquear a thread de background.
 
     Campos da resposta:
-    - ``recording``     — True se uma sessão está ativa.
-    - ``topics``        — lista de tópicos na sessão atual.
-    - ``counts``        — número de entradas gravadas por tópico.
-    - ``total_entries`` — soma de todas as entradas em memória.
+    - ``recording``      — True se uma sessão está ativa.
+    - ``thread_running`` — True se a thread de background está viva.
+    - ``topics``         — lista de tópicos na sessão atual.
+    - ``counts``         — número de entradas gravadas por tópico.
+    - ``total_entries``  — soma de todas as entradas em memória.
     """
     logger.debug("GET /recording/status chamado.")
-
-    # Coleta incremental para atualizar contadores sem bloquear
-    if data_recorder.recording:
-        try:
-            data_recorder.record_from_buffer(topic_manager)
-        except Exception as exc:
-            logger.warning(
-                "Erro na coleta incremental em /recording/status: %s", exc
-            )
 
     stats = data_recorder.get_stats()
 
     return RecordingStatusResponse(
         recording=stats["recording"],
+        thread_running=stats["thread_running"],
         topics=stats["topics"],
         counts=stats["entry_counts"],
         total_entries=stats["total_entries"],

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Sobrescreva via TOPIC_BUFFER_SIZE no .env.
     TOPIC_BUFFER_SIZE: int = 1000
 
+    # Intervalo entre coletas do background recorder (segundos).
+    # Valores menores aumentam a fidelidade, mas consomem mais CPU.
+    # Sobrescreva via RECORD_INTERVAL no .env.
+    RECORD_INTERVAL: float = 0.2
+
     # --- Sistema de arquivos ---
     # Diretório raiz permitido para leitura/escrita de arquivos.
     # Sobrescreva via variável de ambiente FILES_BASE_PATH ou no .env.

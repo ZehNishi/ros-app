@@ -1,16 +1,19 @@
 """
-Gravador de dados de tópicos ROS em formato CSV.
+Gravador de dados de tópicos ROS em formato CSV com coleta automática em background.
 
-Permite iniciar/parar uma sessão de gravação, coletar mensagens do buffer
-do TopicManager e persistir os dados em arquivos CSV — um por tópico.
+O DataRecorder mantém uma thread interna que chama ``record_from_buffer()``
+periodicamente enquanto a gravação estiver ativa, eliminando a necessidade
+de polling externo.
 
 Fluxo típico:
     recorder.start_recording(["/chatter", "/scan"])
+    # → thread de background inicia automaticamente
 
-    # Em loop periódico (e.g. a cada segundo):
-    recorder.record_from_buffer(topic_manager)
+    # Aguarda mensagens chegarem...
 
     recorder.stop_recording()
+    # → thread encerra de forma segura (join com timeout)
+
     paths = recorder.save_to_csv("output/recordings")
 
 Formato do CSV:
@@ -25,16 +28,21 @@ Formato do CSV:
 - Valores que não puderem ser representados como scalar são convertidos via str().
 
 Thread-safety:
-    Um único threading.Lock por instância protege ``recording``, ``topics``
-    e ``_data``. O lock é adquirido o mínimo necessário para evitar bloquear
-    callbacks de longa duração durante saves.
+    - ``_lock`` protege todo o estado mutável (_recording, _topics, _data, etc.).
+    - ``_stop_event`` (threading.Event) sinaliza à thread de background para encerrar.
+      Usar Event.wait(timeout) ao invés de time.sleep permite resposta imediata
+      ao sinal de parada.
+    - Apenas uma thread de background pode existir por vez; start_recording()
+      encerra a thread anterior antes de criar uma nova.
 """
 
 import csv
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.ros.message_converter import convert_ros_message
 
@@ -47,20 +55,23 @@ logger = get_logger(__name__)
 
 class DataRecorder:
     """
-    Grava mensagens ROS em memória e exporta para CSV.
+    Grava mensagens ROS em memória com coleta automática em background e exporta CSV.
+
+    A thread de background é iniciada automaticamente por ``start_recording()``
+    e encerrada por ``stop_recording()``. Não é necessário nenhum loop externo.
 
     Atributos públicos (somente leitura via propriedades):
-        recording  — True se uma sessão de gravação está ativa.
-        topics     — Lista de tópicos sendo gravados na sessão atual.
+        recording       — True se uma sessão de gravação está ativa.
+        topics          — Lista de tópicos sendo gravados na sessão atual.
+        thread_running  — True se a thread de background está viva.
 
     Uso:
         from app.ros.data_recorder import data_recorder
-        from app.ros.topic_manager import topic_manager
 
         data_recorder.start_recording(["/chatter"])
-        data_recorder.record_from_buffer(topic_manager)
-        paths = data_recorder.save_to_csv("recordings/")
+        time.sleep(5)                          # coleta acontece automaticamente
         data_recorder.stop_recording()
+        paths = data_recorder.save_to_csv("recordings/")
     """
 
     def __init__(self) -> None:
@@ -72,11 +83,17 @@ class DataRecorder:
         # { topic_name: list[{"timestamp": float, "msg_dict": dict}] }
         self._data: dict[str, list[dict[str, Any]]] = {}
 
-        # Rastreia o último timestamp gravado por tópico para deduplicação.
-        # { topic_name: float }
+        # Rastreia o último timestamp gravado por tópico (deduplicação).
         self._last_timestamps: dict[str, float] = {}
 
-        logger.debug("DataRecorder inicializado.")
+        # Thread de background e evento de parada.
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event: threading.Event = threading.Event()
+
+        logger.debug(
+            "DataRecorder inicializado (RECORD_INTERVAL=%.2fs).",
+            settings.RECORD_INTERVAL,
+        )
 
     # ------------------------------------------------------------------
     # Propriedades de estado (somente leitura, thread-safe)
@@ -94,76 +111,183 @@ class DataRecorder:
         with self._lock:
             return list(self._topics)
 
+    @property
+    def thread_running(self) -> bool:
+        """True se a thread de background de coleta está viva."""
+        return self._thread is not None and self._thread.is_alive()
+
     # ------------------------------------------------------------------
     # Controle de sessão
     # ------------------------------------------------------------------
 
-    def start_recording(self, topics: list[str]) -> None:
+    def start_recording(
+        self,
+        topics: list[str],
+        interval: Optional[float] = None,
+    ) -> None:
         """
-        Inicia uma nova sessão de gravação para os tópicos informados.
+        Inicia uma nova sessão de gravação e dispara a thread de background.
 
-        Inicializa buffers vazios para cada tópico e reseta os rastreadores
-        de timestamp para evitar duplicação de entradas de sessões anteriores.
+        A thread executa ``record_from_buffer()`` a cada ``interval`` segundos
+        usando ``threading.Event.wait()`` — isso permite que o sinal de parada
+        seja respondido imediatamente sem aguardar o sleep completo.
 
-        Se já houver uma sessão ativa, ela é descartada e substituída pela nova.
+        Se já houver uma sessão ativa, ela é encerrada (thread joined) antes
+        de iniciar a nova. Os dados da sessão anterior são descartados.
 
         Args:
-            topics: Lista de nomes de tópicos ROS (ex. ["/chatter", "/scan"]).
+            topics:   Lista de tópicos ROS (ex. ["/chatter", "/scan"]).
+            interval: Intervalo entre coletas em segundos. Usa
+                      ``settings.RECORD_INTERVAL`` (padrão 0.2s) se omitido.
 
         Raises:
-            ValueError: Se a lista de tópicos estiver vazia.
-
-        Exemplo:
-            recorder.start_recording(["/chatter", "/scan"])
+            ValueError: Se a lista de tópicos estiver vazia ou o intervalo
+                        for menor ou igual a zero.
         """
         if not topics:
             raise ValueError("A lista de tópicos não pode ser vazia.")
 
-        with self._lock:
-            if self._recording:
-                logger.warning(
-                    "start_recording() chamado com sessão ativa — "
-                    "descartando sessão anterior (%d tópico(s), %d entrada(s) total).",
-                    len(self._topics),
-                    sum(len(v) for v in self._data.values()),
-                )
+        _interval = interval if interval is not None else settings.RECORD_INTERVAL
+        if _interval <= 0:
+            raise ValueError(f"interval deve ser > 0, recebido: {_interval}")
 
+        # Encerra sessão anterior (se houver) de forma segura
+        if self.thread_running or self.recording:
+            logger.warning(
+                "start_recording(): encerrando sessão anterior antes de iniciar nova."
+            )
+            self._signal_stop_and_join()
+
+        with self._lock:
             self._topics = list(topics)
             self._data = {t: [] for t in topics}
             self._last_timestamps = {t: -1.0 for t in topics}
             self._recording = True
 
-            logger.info(
-                "Gravação iniciada para %d tópico(s): %s",
-                len(topics),
-                topics,
-            )
+        # Prepara o evento de parada para a nova sessão
+        self._stop_event.clear()
+
+        # Cria thread daemon — não impede o processo de encerrar
+        self._thread = threading.Thread(
+            target=self._run_loop,
+            args=(_interval,),
+            name=f"DataRecorder-{id(self)}",
+            daemon=True,
+        )
+        self._thread.start()
+
+        logger.info(
+            "Gravação iniciada para %d tópico(s) %s | interval=%.2fs | thread=%s",
+            len(topics),
+            topics,
+            _interval,
+            self._thread.name,
+        )
 
     def stop_recording(self) -> None:
         """
-        Para a sessão de gravação ativa.
+        Para a sessão de gravação e aguarda a thread de background encerrar.
 
-        Os dados já gravados em memória são mantidos e podem ser exportados
-        via ``save_to_csv()`` após chamar este método.
+        A thread recebe o sinal via ``_stop_event`` e termina no próximo tick,
+        sem aguardar o intervalo completo. O ``join()`` garante que não há coleta
+        parcial em andamento quando este método retorna.
 
         Se nenhuma sessão estiver ativa, a chamada é ignorada silenciosamente.
         """
         with self._lock:
             if not self._recording:
-                logger.debug("stop_recording() chamado sem sessão ativa — ignorando.")
+                logger.debug("stop_recording(): nenhuma sessão ativa — ignorando.")
                 return
-
             total = sum(len(v) for v in self._data.values())
-            self._recording = False
 
-            logger.info(
-                "Gravação encerrada. %d entrada(s) em memória para %d tópico(s).",
-                total,
-                len(self._topics),
-            )
+        self._signal_stop_and_join()
+
+        logger.info(
+            "Gravação encerrada. %d entrada(s) em memória para %d tópico(s).",
+            total,
+            len(self.topics),
+        )
 
     # ------------------------------------------------------------------
-    # Coleta de dados
+    # Thread de background
+    # ------------------------------------------------------------------
+
+    def _run_loop(self, interval: float) -> None:
+        """
+        Loop de coleta executado pela thread de background.
+
+        Usa ``_stop_event.wait(interval)`` em vez de ``time.sleep(interval)``:
+        - Retorna imediatamente (True) quando ``_stop_event`` é sinalizado.
+        - Retorna após o timeout (False) no caso normal, permitindo coleta.
+
+        Importa ``topic_manager`` lazily para evitar importação circular
+        (data_recorder → topic_manager → data_recorder).
+        """
+        # Importação lazy para evitar circular import no nível de módulo
+        from app.ros.topic_manager import topic_manager  # noqa: PLC0415
+
+        logger.debug("Thread de background iniciada (interval=%.2fs).", interval)
+        cycle = 0
+
+        while not self._stop_event.wait(timeout=interval):
+            # _stop_event.wait retorna False no timeout → executa coleta
+            if not self.recording:
+                logger.debug("_run_loop: recording=False detectado — encerrando loop.")
+                break
+
+            try:
+                counts = self.record_from_buffer(topic_manager)
+                cycle += 1
+                total_new = sum(counts.values())
+                if total_new:
+                    logger.debug(
+                        "_run_loop ciclo #%d: %d nova(s) entrada(s) — %s",
+                        cycle, total_new, counts,
+                    )
+            except RuntimeError:
+                # recording foi desligado entre o check acima e record_from_buffer
+                logger.debug("_run_loop: RuntimeError — sessão encerrada. Saindo.")
+                break
+            except Exception as exc:
+                logger.warning("_run_loop ciclo #%d: erro inesperado: %s", cycle, exc)
+
+        logger.debug("Thread de background encerrada após %d ciclo(s).", cycle)
+
+    def _signal_stop_and_join(self, join_timeout: float = 5.0) -> None:
+        """
+        Sinaliza a thread para parar e aguarda sua conclusão.
+
+        Seta ``_stop_event`` e ``_recording=False`` (nessa ordem para
+        que o loop detecte o encerramento mesmo que esteja bloqueado no wait).
+
+        Args:
+            join_timeout: Segundos máximos para aguardar a thread. Após o
+                          timeout, loga aviso mas prossegue.
+        """
+        with self._lock:
+            self._recording = False
+
+        self._stop_event.set()
+
+        if self._thread is not None and self._thread.is_alive():
+            logger.debug(
+                "Aguardando thread '%s' encerrar (timeout=%.1fs)...",
+                self._thread.name, join_timeout,
+            )
+            self._thread.join(timeout=join_timeout)
+
+            if self._thread.is_alive():
+                logger.warning(
+                    "Thread '%s' não encerrou dentro de %.1fs.",
+                    self._thread.name, join_timeout,
+                )
+            else:
+                logger.debug("Thread '%s' encerrada.", self._thread.name)
+
+        self._thread = None
+
+    # ------------------------------------------------------------------
+    # Coleta de dados (pode ser chamada externamente ou pela thread)
     # ------------------------------------------------------------------
 
     def record_from_buffer(self, topic_manager: Any) -> dict[str, int]:
@@ -172,12 +296,11 @@ class DataRecorder:
         interno, evitando duplicação pelo timestamp.
 
         Apenas mensagens com ``timestamp > last_recorded_timestamp`` são
-        copiadas. Isso permite chamar este método repetidamente em loop
-        sem duplicar entradas.
+        copiadas. Chamadas repetidas são seguras e idempotentes.
 
-        Este método não bloqueia os callbacks do rospy — o lock é adquirido
-        apenas para leitura da lista de tópicos e para escrita nas listas
-        internas, não durante a conversão das mensagens.
+        O lock é adquirido apenas para leitura da lista de tópicos e para
+        escrita nas listas internas — a conversão de mensagens ocorre fora
+        do lock para não bloquear callbacks do rospy nem outros threads.
 
         Args:
             topic_manager: Instância de TopicManager com histórico de mensagens.
@@ -188,10 +311,6 @@ class DataRecorder:
 
         Raises:
             RuntimeError: Se chamado sem sessão de gravação ativa.
-
-        Exemplo:
-            counts = recorder.record_from_buffer(topic_manager)
-            print(counts)  # {"/chatter": 5, "/scan": 2}
         """
         with self._lock:
             if not self._recording:
@@ -216,20 +335,15 @@ class DataRecorder:
             if not history:
                 continue
 
-            # Filtra apenas entradas mais novas que o último timestamp gravado
             with self._lock:
                 last_ts = self._last_timestamps.get(topic, -1.0)
 
             new_entries = [e for e in history if e["timestamp"] > last_ts]
 
             if not new_entries:
-                logger.debug(
-                    "record_from_buffer('%s'): sem novas entradas desde ts=%.3f.",
-                    topic, last_ts,
-                )
                 continue
 
-            # Converte as mensagens fora do lock para não bloquear outras threads
+            # Conversão fora do lock — pode demorar para mensagens grandes
             converted_entries: list[dict[str, Any]] = []
             for entry in new_entries:
                 try:
@@ -243,10 +357,9 @@ class DataRecorder:
 
                 converted_entries.append({
                     "timestamp": entry["timestamp"],
-                    "msg_dict": msg_dict,
+                    "msg_dict":  msg_dict,
                 })
 
-            # Grava no buffer interno com lock mínimo
             with self._lock:
                 if topic in self._data:
                     self._data[topic].extend(converted_entries)
@@ -254,13 +367,13 @@ class DataRecorder:
                     new_counts[topic] = len(converted_entries)
 
             logger.debug(
-                "record_from_buffer('%s'): %d nova(s) entrada(s) gravada(s).",
+                "record_from_buffer('%s'): %d nova(s) entrada(s).",
                 topic, len(converted_entries),
             )
 
         total_new = sum(new_counts.values())
         if total_new:
-            logger.info(
+            logger.debug(
                 "record_from_buffer(): %d nova(s) entrada(s) total — %s",
                 total_new, new_counts,
             )
@@ -280,29 +393,22 @@ class DataRecorder:
             1714000000.1,hello,0
             1714000000.5,world,1
 
-        - A primeira coluna é sempre o ``timestamp`` Unix.
-        - As demais colunas são os campos planos da mensagem convertida.
-          Campos aninhados (dicts/listas) são aplanados via ``_flatten_dict()``.
-        - O cabeçalho é determinado pela união de todos os campos encontrados
-          nas mensagens do tópico (garante compatibilidade mesmo se campos
-          variarem entre mensagens do mesmo tópico).
-        - Campos ausentes em uma mensagem ficam vazios na linha correspondente.
+        - Primeira coluna é sempre o timestamp Unix.
+        - Demais colunas são os campos planos da mensagem (notação de ponto
+          para campos aninhados).
+        - Cabeçalho é a união de todos os campos encontrados no tópico.
+        - Campos ausentes em uma linha ficam vazios.
         - Cria o diretório automaticamente se não existir.
 
         Args:
             output_dir: Caminho do diretório de saída (absoluto ou relativo).
 
         Returns:
-            dict[str, str]: Mapeamento { topic_name: caminho_do_arquivo }.
+            dict[str, str]: { topic_name: caminho_do_arquivo }.
                             Tópicos sem dados não geram arquivo.
 
         Raises:
-            RuntimeError: Se não houver dados gravados (start_recording nunca
-                          foi chamado ou nenhuma mensagem foi coletada).
-
-        Exemplo:
-            paths = recorder.save_to_csv("recordings/session_01")
-            # {"/ chatter": "recordings/session_01/chatter.csv"}
+            RuntimeError: Se nenhuma sessão foi iniciada.
         """
         with self._lock:
             if not self._topics:
@@ -310,7 +416,6 @@ class DataRecorder:
                     "Nenhuma sessão de gravação foi iniciada. "
                     "Chame start_recording() antes de save_to_csv()."
                 )
-            # Copia para fora do lock — save pode ser demorado
             data_snapshot: dict[str, list] = {
                 t: list(entries) for t, entries in self._data.items()
             }
@@ -329,13 +434,11 @@ class DataRecorder:
                 logger.info("save_to_csv(): tópico '%s' sem dados — ignorado.", topic)
                 continue
 
-            # Nome do arquivo: remove "/" iniciais e substitui "/" por "_"
             filename = topic.lstrip("/").replace("/", "_") + ".csv"
             file_path = out_path / filename
 
-            # Aplana todas as mensagens e descobre o conjunto de colunas
             flat_rows: list[dict[str, Any]] = []
-            all_columns: dict[str, None] = {}  # dict preserva inserção (Python 3.7+)
+            all_columns: dict[str, None] = {}
 
             for entry in entries:
                 flat = _flatten_dict(entry["msg_dict"])
@@ -351,7 +454,7 @@ class DataRecorder:
                         f,
                         fieldnames=fieldnames,
                         extrasaction="ignore",
-                        restval="",   # campos ausentes ficam vazios
+                        restval="",
                     )
                     writer.writeheader()
                     writer.writerows(flat_rows)
@@ -363,9 +466,7 @@ class DataRecorder:
                 )
 
             except OSError as exc:
-                logger.error(
-                    "save_to_csv(): erro ao gravar '%s': %s", file_path, exc
-                )
+                logger.error("save_to_csv(): erro ao gravar '%s': %s", file_path, exc)
 
         logger.info(
             "save_to_csv(): %d/%d tópico(s) exportado(s).",
@@ -383,18 +484,20 @@ class DataRecorder:
 
         Returns:
             dict com:
-                - ``recording``     — bool
-                - ``topics``        — lista de tópicos
-                - ``entry_counts``  — { topic: n_entradas }
-                - ``total_entries`` — total de entradas em memória
+                - ``recording``      — bool: sessão ativa
+                - ``thread_running`` — bool: thread de background viva
+                - ``topics``         — lista de tópicos
+                - ``entry_counts``   — { topic: n_entradas }
+                - ``total_entries``  — soma de todas as entradas
         """
         with self._lock:
             counts = {t: len(v) for t, v in self._data.items()}
             return {
-                "recording":     self._recording,
-                "topics":        list(self._topics),
-                "entry_counts":  counts,
-                "total_entries": sum(counts.values()),
+                "recording":      self._recording,
+                "thread_running": self.thread_running,
+                "topics":         list(self._topics),
+                "entry_counts":   counts,
+                "total_entries":  sum(counts.values()),
             }
 
 
@@ -416,22 +519,13 @@ def _flatten_dict(
         {"header": {"stamp": {"secs": 1}}, "data": 42}
         → {"header.stamp.secs": 1, "data": 42}
 
-    Listas são convertidas para string JSON-like para manter uma coluna única.
+    Listas são convertidas para string para manter uma coluna única.
     Profundidade máxima de recursão: 8 níveis.
-
-    Args:
-        d:          Valor a aplanar (dict, list, ou scalar).
-        parent_key: Prefixo acumulado da chave (usado na recursão).
-        sep:        Separador entre níveis (padrão: ".").
-
-    Returns:
-        dict plano com valores escalares (str, int, float, bool, None).
     """
     if _depth > _max_depth:
         return {parent_key: str(d)} if parent_key else {"_value": str(d)}
 
     if not isinstance(d, dict):
-        # Chamada com valor não-dict — empacota
         return {parent_key: _to_scalar(d)} if parent_key else {}
 
     items: dict[str, Any] = {}
@@ -439,11 +533,8 @@ def _flatten_dict(
         new_key = f"{parent_key}{sep}{key}" if parent_key else key
 
         if isinstance(value, dict):
-            items.update(
-                _flatten_dict(value, new_key, sep, _depth + 1, _max_depth)
-            )
+            items.update(_flatten_dict(value, new_key, sep, _depth + 1, _max_depth))
         elif isinstance(value, (list, tuple)):
-            # Listas viram string — evita explosão de colunas para arrays longos
             items[new_key] = str(value)
         else:
             items[new_key] = _to_scalar(value)
@@ -452,11 +543,7 @@ def _flatten_dict(
 
 
 def _to_scalar(value: Any) -> Any:
-    """
-    Converte um valor para um tipo CSV-seguro (str, int, float, bool, None).
-
-    Retorna o valor diretamente se já for escalar; caso contrário usa str().
-    """
+    """Converte para tipo CSV-seguro. Retorna o valor se já for escalar."""
     if isinstance(value, (int, float, bool, str, type(None))):
         return value
     return str(value)

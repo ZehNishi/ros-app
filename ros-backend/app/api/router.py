@@ -15,12 +15,16 @@ Rotas registradas:
     GET  /api/v1/files?path=        — lista arquivos/diretórios no workspace
     GET  /api/v1/file?path=         — lê conteúdo de arquivo
     POST /api/v1/file               — cria ou substitui arquivo
+    POST /api/v1/run                — executa comando e aguarda conclusão
+    POST /api/v1/run/background     — executa comando em background
+    POST /api/v1/kill               — encerra processo por PID
 """
 
 from fastapi import APIRouter
 
 from app.api.endpoints import health, topics, subscriptions
 from app.api.routes_files import router as files_router
+from app.api.routes_system import router as system_router
 
 api_router = APIRouter()
 
@@ -28,3 +32,4 @@ api_router.include_router(health.router,        prefix="/health",   tags=["healt
 api_router.include_router(topics.router,        prefix="/topics",   tags=["topics"])
 api_router.include_router(subscriptions.router, prefix="",          tags=["subscriptions"])
 api_router.include_router(files_router,         prefix="",          tags=["files"])
+api_router.include_router(system_router,        prefix="",          tags=["system"])

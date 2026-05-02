@@ -40,6 +40,31 @@ class Settings(BaseSettings):
     # Tamanho máximo de escrita de arquivo (bytes). Padrão: 1 MB.
     FILES_MAX_WRITE_BYTES: int = 1 * 1024 * 1024
 
+    # --- Execução de comandos do sistema ---
+    # Diretório de trabalho para execução de comandos shell.
+    # Sobrescreva via SYSTEM_WORKDIR no .env.
+    # Exemplo: SYSTEM_WORKDIR=/home/usuario/catkin_ws
+    SYSTEM_WORKDIR: Path = Path.home() / "catkin_ws"
+
+    # Timeout padrão em segundos para POST /run (subprocess.run bloqueante).
+    SYSTEM_DEFAULT_TIMEOUT: int = 10
+
+    # Tamanho máximo de stdout/stderr capturados (bytes). Padrão: 1 MB.
+    SYSTEM_MAX_OUTPUT_BYTES: int = 1 * 1024 * 1024
+
+    # Lista de prefixos de executáveis permitidos.
+    # Somente o primeiro elemento da lista de argumentos é verificado.
+    # Uma lista vazia desativa a restrição (permite tudo — não recomendado).
+    # Exemplo via .env: SYSTEM_ALLOWED_COMMANDS='["rosrun","roslaunch"]'
+    SYSTEM_ALLOWED_COMMANDS: list[str] = [
+        "rosrun",
+        "roslaunch",
+        "catkin",
+        "catkin_make",
+        "python",
+        "python3",
+    ]
+
     # --- Logging ---
     LOG_LEVEL: str = "INFO"
 

@@ -15,6 +15,8 @@ Pré-requisito:
     roscore   # em outro terminal
 """
 
+from __future__ import annotations
+
 import threading
 from typing import Optional
 

@@ -9,6 +9,8 @@ ROSUnavailableError e ROSNotInitializedError são tratados pelo handler global
 em app/main.py e convertidos em HTTP 503 e HTTP 500 respectivamente.
 """
 
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 

@@ -18,6 +18,8 @@ ROSNotInitializedError, que são convertidas em HTTP 503/500 pelo handler
 global em app/main.py.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 from typing import Any, AsyncGenerator, Optional

@@ -38,8 +38,14 @@ Notas de design:
       engole tudo, incluindo "gps/algo" — ordem de registro determina precedência.
 """
 
+from __future__ import annotations
+
 import io
-from typing import Annotated, Literal, Optional
+try:
+    from typing import Annotated
+except ImportError:
+    from typing_extensions import Annotated  # Python 3.8
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response

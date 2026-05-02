@@ -18,6 +18,8 @@ Fluxo:
     POST /recording/save    → exporta tudo
 """
 
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Any

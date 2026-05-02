@@ -27,6 +27,8 @@ Fluxo típico:
     topic_manager.unsubscribe("/chatter")
 """
 
+from __future__ import annotations
+
 import time
 import threading
 from collections import deque

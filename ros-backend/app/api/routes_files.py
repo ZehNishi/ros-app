@@ -19,6 +19,8 @@ Limites configuráveis via settings (app/core/config.py ou .env):
     FILES_MAX_WRITE_BYTES — tamanho máximo de escrita (padrão 1 MB)
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Literal, Optional
 

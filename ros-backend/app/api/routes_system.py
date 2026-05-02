@@ -18,6 +18,8 @@ Segurança:
 - Processos background são rastreados internamente para permitir /kill seguro.
 """
 
+from __future__ import annotations
+
 import os
 import signal
 import subprocess

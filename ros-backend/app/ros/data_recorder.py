@@ -36,6 +36,8 @@ Thread-safety:
       encerra a thread anterior antes de criar uma nova.
 """
 
+from __future__ import annotations
+
 import csv
 import threading
 import time

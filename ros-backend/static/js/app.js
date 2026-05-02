@@ -927,77 +927,162 @@ class DashboardManager {
 
   // ── Modal: Batch Window ───────────────────────────────
   openBatchModal() {
-    document.getElementById('batch-window-title').value   = '';
-    document.getElementById('batch-topic-pattern').value  = '';
+    document.getElementById('batch-window-title').value = '';
+    // Reset to exact mode
     const radios = document.querySelectorAll('input[name="batch-mode"]');
     if (radios.length) radios[0].checked = true;
+    document.getElementById('batch-exact-group').style.display  = '';
+    document.getElementById('batch-prefix-group').style.display = 'none';
+    document.getElementById('batch-topics-loading').style.display = '';
+    document.getElementById('batch-topic-select').style.display   = 'none';
+    document.getElementById('batch-prefix-input').value           = '';
+    document.getElementById('batch-prefix-preview').style.display = 'none';
     document.getElementById('modal-batch-window').classList.remove('hidden');
     document.getElementById('batch-window-title').focus();
+    this._loadBatchTopics();
+  }
+
+  async _loadBatchTopics() {
+    this._batchTopics = [];
+    try {
+      const res = await fetch('/api/v1/topics');
+      if (!res.ok) throw new Error('Falha ao buscar tópicos do servidor.');
+      const data = await res.json();
+      this._batchTopics = (data.topics || []).map(t => t.name).sort();
+
+      const loadingEl = document.getElementById('batch-topics-loading');
+      const selectEl  = document.getElementById('batch-topic-select');
+      if (!loadingEl || !selectEl) return;
+
+      if (this._batchTopics.length === 0) {
+        loadingEl.textContent = 'Nenhum tópico publicado encontrado.';
+        return;
+      }
+
+      selectEl.innerHTML = '';
+      this._batchTopics.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        selectEl.appendChild(opt);
+      });
+      if (selectEl.options.length > 0) selectEl.selectedIndex = 0;
+
+      loadingEl.style.display = 'none';
+      selectEl.style.display  = '';
+
+      // If prefix tab is already active, refresh preview
+      const mode = document.querySelector('input[name="batch-mode"]:checked')?.value;
+      if (mode === 'prefix') this._batchUpdatePrefixPreview();
+    } catch (err) {
+      const loadingEl = document.getElementById('batch-topics-loading');
+      if (loadingEl) loadingEl.textContent = `Erro: ${err.message}`;
+    }
+  }
+
+  onBatchModeChange() {
+    const mode       = document.querySelector('input[name="batch-mode"]:checked')?.value;
+    const exactGroup  = document.getElementById('batch-exact-group');
+    const prefixGroup = document.getElementById('batch-prefix-group');
+    if (mode === 'exact') {
+      exactGroup.style.display  = '';
+      prefixGroup.style.display = 'none';
+    } else {
+      exactGroup.style.display  = 'none';
+      prefixGroup.style.display = '';
+      this._batchUpdatePrefixPreview();
+    }
+  }
+
+  onBatchPrefixInput() {
+    this._batchUpdatePrefixPreview();
+  }
+
+  _batchUpdatePrefixPreview() {
+    const input   = document.getElementById('batch-prefix-input');
+    const preview = document.getElementById('batch-prefix-preview');
+    if (!input || !preview) return;
+
+    const raw     = input.value.trim();
+    const topics  = this._batchTopics || [];
+
+    if (!raw || topics.length === 0) {
+      preview.style.display = 'none';
+      return;
+    }
+
+    const norm    = raw.startsWith('/') ? raw : `/${raw}`;
+    const matches = topics.filter(n => n.startsWith(norm));
+
+    preview.style.display = '';
+    if (matches.length === 0) {
+      preview.innerHTML = '<em style="color:var(--text-muted,#888)">Nenhum tópico corresponde a este prefixo.</em>';
+    } else {
+      preview.innerHTML = matches.map(n =>
+        `<div style="padding:2px 0; color:var(--text,#ddd)">• ${n}</div>`
+      ).join('');
+    }
   }
 
   async confirmBatchModal() {
-    const title   = document.getElementById('batch-window-title').value.trim();
-    const mode    = document.querySelector('input[name="batch-mode"]:checked').value;
-    const pattern = document.getElementById('batch-topic-pattern').value.trim();
+    const title = document.getElementById('batch-window-title').value.trim();
+    const mode  = document.querySelector('input[name="batch-mode"]:checked').value;
 
-    if (!title) {
-      this._toast.show('Digite um nome para a janela.', 'warn');
-      return;
-    }
-    if (!pattern) {
-      this._toast.show('Informe o tópico ou prefixo.', 'warn');
-      return;
-    }
+    if (!title) { this._toast.show('Digite um nome para a janela.', 'warn'); return; }
 
-    this.closeModal('modal-batch-window');
-    this._toast.show('Buscando tópicos e campos…', 'info', 2500);
-
-    // ── 1. Determine which topics to process ──────────
+    // ── 1. Resolve topics to process ──────────────────────────────────────────
     let topicsToProcess = [];
 
     if (mode === 'exact') {
-      topicsToProcess = [pattern];
+      const sel = document.getElementById('batch-topic-select');
+      if (!sel || !sel.value) {
+        this._toast.show('Selecione um tópico na lista.', 'warn');
+        return;
+      }
+      topicsToProcess = [sel.value];
     } else {
-      try {
-        const res = await fetch('/api/v1/topics');
-        if (!res.ok) throw new Error('Falha ao buscar lista de tópicos.');
-        const data = await res.json();
-        const all  = (data.topics || []).map(t => t.name);
-        topicsToProcess = all.filter(n => n.startsWith(pattern));
-        if (topicsToProcess.length === 0) {
-          this._toast.show(`Nenhum tópico encontrado com prefixo "${pattern}".`, 'warn');
-          return;
-        }
-      } catch (err) {
-        this._toast.show(err.message, 'error');
+      const raw = document.getElementById('batch-prefix-input').value.trim();
+      if (!raw) { this._toast.show('Informe o prefixo.', 'warn'); return; }
+      const norm = raw.startsWith('/') ? raw : `/${raw}`;
+      topicsToProcess = (this._batchTopics || []).filter(n => n.startsWith(norm));
+      if (topicsToProcess.length === 0) {
+        this._toast.show(`Nenhum tópico encontrado com prefixo "${norm}".`, 'warn');
         return;
       }
     }
 
-    // ── 2. Create the target window ───────────────────
+    this.closeModal('modal-batch-window');
+    this._toast.show(`Criando gráficos para ${topicsToProcess.length} tópico(s)…`, 'info', 3000);
+
+    // ── 2. Create window ───────────────────────────────────────────────────────
     const winId = `w${this._nextWinId++}`;
     this._createWindowDOM(winId, title);
     this.showTab(winId);
 
-    // ── 3. Header fields to always skip ──────────────
-    const SKIP_FIELDS = new Set([
-      'header', 'header.seq',
-      'header.stamp', 'header.stamp.secs', 'header.stamp.nsecs', 'header.stamp.total_seconds',
-      'header.frame_id',
-    ]);
+    // ── 3. Fields to always skip ───────────────────────────────────────────────
+    const SKIP_PREFIX = ['header.', 'header'];
 
     let totalCreated = 0;
     let colorIdx     = 0;
 
     for (const topicName of topicsToProcess) {
-      // ── 3a. Fetch fields ──────────────────────────
+      // ── 3a. Fetch fields (strip leading / — backend adds it back) ────────────
       let fields = [];
       try {
-        const cleanName = topicName.startsWith('/') ? topicName.slice(1) : topicName;
-        const res  = await fetch(`/api/v1/topics/${encodeURIComponent(cleanName)}/fields`);
-        if (!res.ok) throw new Error(`Falha ao buscar campos de ${topicName}`);
+        const urlName = topicName.startsWith('/') ? topicName.slice(1) : topicName;
+        const res     = await fetch(`/api/v1/topics/${urlName}/fields`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Falha ao buscar campos de ${topicName}`);
+        }
         const data = await res.json();
-        fields = (data.fields || []).filter(f => !SKIP_FIELDS.has(f));
+        let raw = data.fields || [];
+
+        // Remove header fields
+        raw = raw.filter(f => !SKIP_PREFIX.some(p => f === p || f.startsWith(p + '.')));
+
+        // Keep only leaf fields (no other field is a child of this one)
+        fields = raw.filter(f => !raw.some(other => other !== f && other.startsWith(f + '.')));
       } catch (err) {
         this._toast.show(err.message, 'warn');
         continue;
@@ -1005,12 +1090,12 @@ class DashboardManager {
 
       if (fields.length === 0) continue;
 
-      // ── 3b. Subscribe to the topic ────────────────
+      // ── 3b. Subscribe ────────────────────────────────────────────────────────
       try {
         const res = await fetch('/api/v1/subscribe', {
-          method: 'POST',
+          method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ topic: topicName }),
+          body:    JSON.stringify({ topic: topicName }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -1021,10 +1106,10 @@ class DashboardManager {
         continue;
       }
 
-      // ── 3c. One ChartWidget per field ─────────────
+      // ── 3c. One ChartWidget per leaf field ───────────────────────────────────
       for (const field of fields) {
-        const color = DATASET_COLORS[colorIdx++ % DATASET_COLORS.length];
-        const cfg   = {
+        const color  = DATASET_COLORS[colorIdx++ % DATASET_COLORS.length];
+        const cfg    = {
           id:        String(this._nextId++),
           title:     `${topicName} · ${field}`,
           datasets:  [{ topic: topicName, field, label: field, color }],
@@ -1047,7 +1132,15 @@ class DashboardManager {
       this._toast.show(`${totalCreated} gráfico(s) criado(s) em "${title}".`, 'ok');
       this.saveLayout();
     } else {
-      this._toast.show('Nenhum gráfico criado. Verifique se os tópicos têm campos numéricos.', 'warn');
+      // Remove the empty window that was created
+      const tab = document.querySelector(`.win-tab[data-win-id="${winId}"]`);
+      if (tab) tab.remove();
+      document.getElementById(`win-${winId}`)?.remove();
+      this._windows.delete(winId);
+      this._toast.show(
+        'Nenhum gráfico criado. Verifique se os tópicos têm publishers ativos.',
+        'warn'
+      );
     }
   }
 
@@ -1585,6 +1678,8 @@ const App = {
   deleteWindow:       (id)     => dashboard.deleteWindow(id),
   openBatchModal:     ()       => dashboard.openBatchModal(),
   confirmBatchModal:  ()       => dashboard.confirmBatchModal(),
+  onBatchModeChange:  ()       => dashboard.onBatchModeChange(),
+  onBatchPrefixInput: ()       => dashboard.onBatchPrefixInput(),
   autoDetectIp:       ()       => dashboard.autoDetectIp(),
   onMasterUriChange:  ()       => dashboard.onMasterUriChange(),
   addDatasetRow:      ()       => dashboard._addDatasetRow(),

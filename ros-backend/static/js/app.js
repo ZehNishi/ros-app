@@ -506,6 +506,8 @@ class GpsWidget {
     const el = document.createElement('div');
     el.className = 'widget';
     el.id = `w-${this.id}`;
+    el.draggable = true;
+    el.dataset.wid = this.id;
     el.innerHTML = `
       <div class="widget-header">
         <div class="widget-info">
@@ -833,6 +835,9 @@ class DashboardManager {
       </div>
     `;
     container.appendChild(winPane);
+
+    const gridEl = document.getElementById(`grid-${winId}`);
+    this._setupGridDragDrop(gridEl, winId);
   }
 
   deleteWindow(winId) {
@@ -857,6 +862,181 @@ class DashboardManager {
     }
     this.saveLayout();
     this._toast.show('Janela excluída.', 'info');
+  }
+
+  // ── Drag & Drop ───────────────────────────────────────
+  _setupGridDragDrop(gridEl, winId) {
+    gridEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const dragging = gridEl.querySelector('.widget.dragging');
+      if (!dragging) return;
+      const afterEl = this._getDragAfterElement(gridEl, e.clientY);
+      if (afterEl == null) {
+        gridEl.appendChild(dragging);
+      } else {
+        gridEl.insertBefore(dragging, afterEl);
+      }
+    });
+
+    gridEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      this._syncWidgetOrderFromDOM(winId);
+      this.saveLayout();
+    });
+  }
+
+  _getDragAfterElement(grid, clientY) {
+    const els = [...grid.querySelectorAll('.widget:not(.dragging)')];
+    return els.reduce((closest, el) => {
+      const box = el.getBoundingClientRect();
+      const offset = clientY - box.top - box.height / 2;
+      if (offset < 0 && offset > closest.offset) {
+        return { offset, el };
+      }
+      return closest;
+    }, { offset: -Infinity, el: null }).el;
+  }
+
+  _syncWidgetOrderFromDOM(winId) {
+    const win = this._windows.get(winId);
+    if (!win) return;
+    const gridEl = document.getElementById(`grid-${winId}`);
+    const ordered = [...gridEl.querySelectorAll('.widget[data-wid]')];
+    const newMap = new Map();
+    for (const el of ordered) {
+      const wid = el.dataset.wid;
+      if (win.widgets.has(wid)) {
+        newMap.set(wid, win.widgets.get(wid));
+      }
+    }
+    win.widgets = newMap;
+  }
+
+  // ── Modal: Batch Window ───────────────────────────────
+  openBatchModal() {
+    document.getElementById('batch-window-title').value   = '';
+    document.getElementById('batch-topic-pattern').value  = '';
+    const radios = document.querySelectorAll('input[name="batch-mode"]');
+    if (radios.length) radios[0].checked = true;
+    document.getElementById('modal-batch-window').classList.remove('hidden');
+    document.getElementById('batch-window-title').focus();
+  }
+
+  async confirmBatchModal() {
+    const title   = document.getElementById('batch-window-title').value.trim();
+    const mode    = document.querySelector('input[name="batch-mode"]:checked').value;
+    const pattern = document.getElementById('batch-topic-pattern').value.trim();
+
+    if (!title) {
+      this._toast.show('Digite um nome para a janela.', 'warn');
+      return;
+    }
+    if (!pattern) {
+      this._toast.show('Informe o tópico ou prefixo.', 'warn');
+      return;
+    }
+
+    this.closeModal('modal-batch-window');
+    this._toast.show('Buscando tópicos e campos…', 'info', 2500);
+
+    // ── 1. Determine which topics to process ──────────
+    let topicsToProcess = [];
+
+    if (mode === 'exact') {
+      topicsToProcess = [pattern];
+    } else {
+      try {
+        const res = await fetch('/api/v1/topics');
+        if (!res.ok) throw new Error('Falha ao buscar lista de tópicos.');
+        const data = await res.json();
+        const all  = (data.topics || []).map(t => t.name);
+        topicsToProcess = all.filter(n => n.startsWith(pattern));
+        if (topicsToProcess.length === 0) {
+          this._toast.show(`Nenhum tópico encontrado com prefixo "${pattern}".`, 'warn');
+          return;
+        }
+      } catch (err) {
+        this._toast.show(err.message, 'error');
+        return;
+      }
+    }
+
+    // ── 2. Create the target window ───────────────────
+    const winId = `w${this._nextWinId++}`;
+    this._createWindowDOM(winId, title);
+    this.showTab(winId);
+
+    // ── 3. Header fields to always skip ──────────────
+    const SKIP_FIELDS = new Set([
+      'header', 'header.seq',
+      'header.stamp', 'header.stamp.secs', 'header.stamp.nsecs', 'header.stamp.total_seconds',
+      'header.frame_id',
+    ]);
+
+    let totalCreated = 0;
+    let colorIdx     = 0;
+
+    for (const topicName of topicsToProcess) {
+      // ── 3a. Fetch fields ──────────────────────────
+      let fields = [];
+      try {
+        const cleanName = topicName.startsWith('/') ? topicName.slice(1) : topicName;
+        const res  = await fetch(`/api/v1/topics/${encodeURIComponent(cleanName)}/fields`);
+        if (!res.ok) throw new Error(`Falha ao buscar campos de ${topicName}`);
+        const data = await res.json();
+        fields = (data.fields || []).filter(f => !SKIP_FIELDS.has(f));
+      } catch (err) {
+        this._toast.show(err.message, 'warn');
+        continue;
+      }
+
+      if (fields.length === 0) continue;
+
+      // ── 3b. Subscribe to the topic ────────────────
+      try {
+        const res = await fetch('/api/v1/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ topic: topicName }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(`Falha ao subscrever ${topicName}: ${body.detail || ''}`);
+        }
+      } catch (err) {
+        this._toast.show(err.message, 'warn');
+        continue;
+      }
+
+      // ── 3c. One ChartWidget per field ─────────────
+      for (const field of fields) {
+        const color = DATASET_COLORS[colorIdx++ % DATASET_COLORS.length];
+        const cfg   = {
+          id:        String(this._nextId++),
+          title:     `${topicName} · ${field}`,
+          datasets:  [{ topic: topicName, field, label: field, color }],
+          interval:  0.1,
+          maxPoints: 200,
+          yLabel:    '',
+          yScale:    'linear',
+          toast:     this._toast,
+        };
+        const widget = new ChartWidget(cfg);
+        const win    = this._windows.get(winId);
+        win.widgets.set(widget.id, widget);
+        document.getElementById(`grid-${winId}`).appendChild(widget._el);
+        totalCreated++;
+      }
+      this._updateEmptyState(winId);
+    }
+
+    if (totalCreated > 0) {
+      this._toast.show(`${totalCreated} gráfico(s) criado(s) em "${title}".`, 'ok');
+      this.saveLayout();
+    } else {
+      this._toast.show('Nenhum gráfico criado. Verifique se os tópicos têm campos numéricos.', 'warn');
+    }
   }
 
   // ── Persistence ───────────────────────────────────────
@@ -1381,26 +1561,28 @@ const dashboard = new DashboardManager(toast);
 
 // Global App namespace (used by inline onclick handlers)
 const App = {
-  openAddModal:    ()          => dashboard.openAddModal(),
-  confirmAddModal: ()          => dashboard.confirmAddModal(),
-  openGpsModal:    ()          => dashboard.openGpsModal(),
-  confirmGpsModal: ()          => dashboard.confirmGpsModal(),
-  toggleRosMode:   ()          => dashboard.toggleRosMode(),
-  confirmConnectROS: ()        => dashboard.confirmConnectROS(),
-  showTab:         (id)        => dashboard.showTab(id),
+  openAddModal:       ()       => dashboard.openAddModal(),
+  confirmAddModal:    ()       => dashboard.confirmAddModal(),
+  openGpsModal:       ()       => dashboard.openGpsModal(),
+  confirmGpsModal:    ()       => dashboard.confirmGpsModal(),
+  toggleRosMode:      ()       => dashboard.toggleRosMode(),
+  confirmConnectROS:  ()       => dashboard.confirmConnectROS(),
+  showTab:            (id)     => dashboard.showTab(id),
   openNewWindowModal: ()       => dashboard.openNewWindowModal(),
-  confirmNewWindow: ()         => dashboard.confirmNewWindow(),
-  deleteWindow:    (id)        => dashboard.deleteWindow(id),
-  autoDetectIp:    ()          => dashboard.autoDetectIp(),
-  onMasterUriChange: ()        => dashboard.onMasterUriChange(),
-  addDatasetRow:   ()          => dashboard._addDatasetRow(),
-  clearWidget:     (id)        => dashboard.clearWidget(id),
-  exportWidget:    (id)        => dashboard.exportWidget(id),
-  removeWidget:    (id)        => dashboard.removeWidget(id),
-  togglePause:     (id)        => dashboard.togglePause(id),
-  openHelp:        (ctx)       => dashboard.openHelp(ctx),
-  closeModal:      (id)        => dashboard.closeModal(id),
-  onOverlayClick:  (ev, id)    => dashboard.onOverlayClick(ev, id),
+  confirmNewWindow:   ()       => dashboard.confirmNewWindow(),
+  deleteWindow:       (id)     => dashboard.deleteWindow(id),
+  openBatchModal:     ()       => dashboard.openBatchModal(),
+  confirmBatchModal:  ()       => dashboard.confirmBatchModal(),
+  autoDetectIp:       ()       => dashboard.autoDetectIp(),
+  onMasterUriChange:  ()       => dashboard.onMasterUriChange(),
+  addDatasetRow:      ()       => dashboard._addDatasetRow(),
+  clearWidget:        (id)     => dashboard.clearWidget(id),
+  exportWidget:       (id)     => dashboard.exportWidget(id),
+  removeWidget:       (id)     => dashboard.removeWidget(id),
+  togglePause:        (id)     => dashboard.togglePause(id),
+  openHelp:           (ctx)    => dashboard.openHelp(ctx),
+  closeModal:         (id)     => dashboard.closeModal(id),
+  onOverlayClick:     (ev, id) => dashboard.onOverlayClick(ev, id),
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1410,7 +1592,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      ['modal-add', 'modal-add-gps', 'modal-help'].forEach(id => {
+      ['modal-add', 'modal-add-gps', 'modal-help', 'modal-new-window', 'modal-batch-window'].forEach(id => {
         document.getElementById(id).classList.add('hidden');
       });
     }

@@ -97,17 +97,11 @@ def connect_ros(req: ConnectRequest):
       rospy não suporta re-inicialização — orienta reinício do servidor.
     """
     if ros_client._initialized:
-        if ros_client.is_ready:
-            logger.info("POST /connect: ROS já inicializado e ativo — retornando sucesso.")
-            return {"status": "ok", "message": "ROS já estava conectado e ativo."}
-        else:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "O roscore ficou offline após a inicialização. "
-                    "Reinicie o servidor Python (ros-backend) e tente conectar novamente."
-                ),
-            )
+        # Idempotente: retorna sucesso imediatamente.
+        # rospy não suporta re-inicialização — o estado real (ok vs degraded)
+        # é reportado pelo polling de /health/ros, não pelo endpoint de connect.
+        logger.info("POST /connect: ROS já inicializado — retornando sucesso (idempotente).")
+        return {"status": "ok", "message": "ROS já estava inicializado."}
 
     if req.mode == "wifi" and req.master_uri:
         os.environ["ROS_MASTER_URI"] = req.master_uri

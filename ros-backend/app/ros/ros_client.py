@@ -330,6 +330,12 @@ class RosClient:
             if hasattr(cls, "__slots__") and hasattr(cls, "_slot_types"):
                 for slot_name, slot_type in zip(cls.__slots__, cls._slot_types):
                     slot_path = f"{prefix}.{slot_name}" if prefix else slot_name
+                    
+                    # Ignora matrizes/arrays (ex: float64[9]), pois ainda não são suportados
+                    # nos gráficos e causam sobrecarga de conexões SSE.
+                    if "[" in slot_type:
+                        continue
+                        
                     base_type = slot_type.split("[")[0]
                     
                     if "/" in base_type:

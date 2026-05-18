@@ -14,6 +14,85 @@ const ROS_POLL_INTERVAL   = 6_000;
 // ─────────────────────────────────────────────────────────
 // Utilities
 // ─────────────────────────────────────────────────────────
+class SSEManager {
+  constructor() {
+    this.es = null;
+    this.listeners = []; // { topic, onMessage, onError, onOpen }
+    this.connected = false;
+    this.reconnectTimer = null;
+    this.reconnectDelay = 1000;
+  }
+
+  subscribe(topic, onMessage, onError, onOpen) {
+    this.listeners.push({ topic, onMessage, onError, onOpen });
+    
+    if (!this.es) {
+      this._connect();
+    } else if (this.connected && onOpen) {
+      onOpen();
+    }
+  }
+
+  _connect() {
+    if (this.es) this.es.close();
+    this.es = new EventSource('/api/v1/stream?interval=0.1');
+    
+    this.es.addEventListener('message', (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        const msgTopic = payload.topic;
+        const synthEvent = { data: JSON.stringify({ timestamp: payload.timestamp, data: payload.data }) };
+        
+        this.listeners.forEach(l => {
+          if (l.topic === msgTopic && l.onMessage) {
+            l.onMessage(synthEvent);
+          }
+        });
+      } catch(_) {}
+    });
+
+    this.es.addEventListener('error', (e) => {
+      try {
+        const body = JSON.parse(e.data || '{}');
+        const msgTopic = body.topic;
+        this.listeners.forEach(l => {
+          if ((!msgTopic || l.topic === msgTopic) && l.onError) {
+             l.onError(e);
+          }
+        });
+      } catch(_) {}
+    });
+
+    this.es.onopen = (e) => {
+      this.connected = true;
+      this.reconnectDelay = 1000;
+      clearTimeout(this.reconnectTimer);
+      this.listeners.forEach(l => l.onOpen && l.onOpen(e));
+    };
+
+    this.es.onerror = (e) => {
+      if (!this.connected) return;
+      this.connected = false;
+      this.es.close();
+      this.es = null;
+      this.reconnectTimer = setTimeout(() => this._connect(), this.reconnectDelay);
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+    };
+  }
+
+  unsubscribe(topic, onMessage) {
+    this.listeners = this.listeners.filter(l => !(l.topic === topic && l.onMessage === onMessage));
+    if (this.listeners.length === 0 && this.es) {
+      clearTimeout(this.reconnectTimer);
+      this.es.close();
+      this.es = null;
+      this.connected = false;
+    }
+  }
+}
+
+const sseManager = new SSEManager();
+// ─────────────────────────────────────────────────────────
 function getField(obj, path) {
   if (!path) return obj;
   return path.split('.').reduce((cur, k) => (cur != null ? cur[k] : undefined), obj);
@@ -100,7 +179,10 @@ class ROSStatus {
     try {
       const ctrl = new AbortController();
       const tid  = setTimeout(() => ctrl.abort(), 4000);
-      const res  = await fetch('/api/v1/health/ros', { signal: ctrl.signal });
+      const res  = await fetch('/api/v1/health/ros', { 
+        signal: ctrl.signal,
+        cache: 'no-store' 
+      });
       clearTimeout(tid);
 
       const body = await res.json().catch(() => ({}));
@@ -326,59 +408,39 @@ class ChartWidget {
 
   _openSSE(idx) {
     const stream = this._streams[idx];
-    if (stream.evtSource) stream.evtSource.close();
+    const topicName = stream.topic.startsWith('/') ? stream.topic : `/${stream.topic}`;
+    if (stream.onMessageFn) {
+      sseManager.unsubscribe(topicName, stream.onMessageFn);
+    }
 
-    const topicName = stream.topic.startsWith('/') ? stream.topic.slice(1) : stream.topic;
-    const url = `/api/v1/topic/${encodeURIComponent(topicName)}/stream?interval=${this.interval}`;
 
-    const es = new EventSource(url);
-    stream.evtSource = es;
 
-    es.addEventListener('message', (e) => {
+    stream.onMessageFn = (e) => {
       if (this.paused) return;
       try {
         const { timestamp, data } = JSON.parse(e.data);
         const raw = getField(data, stream.field);
         const val = toNumber(raw);
-        if (val === null) {
-          return;
-        }
+        if (val === null) return;
         this._pushPoint(idx, fmtTime(timestamp), val);
         stream.hzBuffer.push(Date.now());
         this.totalEvents++;
         this._updateStats();
-        // Show canvas
         this._el.querySelector(`#wemp-${this.id}`).style.display = 'none';
         this._el.querySelector(`#wc-${this.id}`).style.display   = 'block';
       } catch (_) {}
-    });
+    };
 
-    es.addEventListener('error', (rawE) => {
+    stream.onErrorFn = (rawE) => {
       try {
         const body = JSON.parse(rawE.data || '{}');
-        if (body.error) {
-          this._toast.show(`${stream.topic}: ${body.error}`, 'error');
-        }
+        if (body.error) this._toast.show(`${stream.topic}: ${body.error}`, 'error');
       } catch (_) {}
-    });
-
-    es.onopen = () => {
-      stream.connected      = true;
-      stream.reconnectDelay = 1000;
-      clearTimeout(stream.reconnectTimer);
     };
 
-    es.onerror = () => {
-      if (!stream.connected) return;
-      stream.connected = false;
-      es.close();
-      stream.evtSource = null;
-      stream.reconnectTimer = setTimeout(
-        () => { if (!stream.connected) this._openSSE(idx); },
-        stream.reconnectDelay,
-      );
-      stream.reconnectDelay = Math.min(stream.reconnectDelay * 2, MAX_RECONNECT_DELAY);
-    };
+    stream.onOpenFn = () => {};
+
+    sseManager.subscribe(topicName, stream.onMessageFn, stream.onErrorFn, stream.onOpenFn);
   }
 
   // ── Data push ─────────────────────────────────────────
@@ -465,8 +527,10 @@ class ChartWidget {
   destroy() {
     clearInterval(this._hzTimer);
     this._streams.forEach(s => {
-      clearTimeout(s.reconnectTimer);
-      if (s.evtSource) s.evtSource.close();
+      if (s.onMessageFn) {
+        const topicName = s.topic.startsWith('/') ? s.topic : `/${s.topic}`;
+        sseManager.unsubscribe(topicName, s.onMessageFn);
+      }
     });
     this._chart.destroy();
     this._el.remove();
@@ -620,15 +684,14 @@ class GpsWidget {
 
   // ── SSE / ENU ─────────────────────────────────────────
   _openSSE() {
-    if (this._evtSource) this._evtSource.close();
+    const topicName = this.topic.startsWith('/') ? this.topic : `/${this.topic}`;
+    if (this.onMessageFn) {
+      sseManager.unsubscribe(topicName, this.onMessageFn);
+    }
     
-    const topicName = this.topic.startsWith('/') ? this.topic.slice(1) : this.topic;
-    const url = `/api/v1/topic/${encodeURIComponent(topicName)}/stream?interval=0.1`;
+
     
-    const es = new EventSource(url);
-    this._evtSource = es;
-    
-    es.addEventListener('message', (e) => {
+    this.onMessageFn = (e) => {
       if (this.paused) return;
       try {
         const { data } = JSON.parse(e.data);
@@ -657,36 +720,18 @@ class GpsWidget {
         this._el.querySelector(`#wemp-${this.id}`).style.display = 'none';
         this._el.querySelector(`#wc-${this.id}`).style.display   = 'block';
       } catch (_) {}
-    });
+    };
 
-    es.addEventListener('error', (rawE) => {
+    this.onErrorFn = (rawE) => {
       try {
         const body = JSON.parse(rawE.data || '{}');
         if (body.error) this._toast.show(`${this.topic}: ${body.error}`, 'error');
       } catch (_) {}
-    });
-
-    es.onopen = () => {
-      this.connected = true;
-      this.reconnectDelay = 1000;
-      clearTimeout(this.reconnectTimer);
     };
 
-    es.onerror = () => {
-      if (!this.connected) {
-        this._toast.show(`Falha na conexão SSE para ${this.topic}`, 'error');
-        es.close();
-        return;
-      }
-      this.connected = false;
-      es.close();
-      this._evtSource = null;
-      this.reconnectTimer = setTimeout(
-        () => { if (!this.connected) this._openSSE(); },
-        this.reconnectDelay,
-      );
-      this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_DELAY);
-    };
+    this.onOpenFn = () => {};
+
+    sseManager.subscribe(topicName, this.onMessageFn, this.onErrorFn, this.onOpenFn);
   }
 
   // ── Hz / Stats / Controls ─────────────────────────────
@@ -740,7 +785,10 @@ class GpsWidget {
 
   destroy() {
     clearInterval(this._hzTimer);
-    if (this._evtSource) this._evtSource.close();
+    if (this.onMessageFn) {
+      const topicName = this.topic.startsWith('/') ? this.topic : `/${this.topic}`;
+      sseManager.unsubscribe(topicName, this.onMessageFn);
+    }
     this._chart.destroy();
     this._el.remove();
   }
@@ -1087,6 +1135,10 @@ class DashboardManager {
         // Remove header fields
         raw = raw.filter(f => !SKIP_PREFIX.some(p => f === p || f.startsWith(p + '.')));
 
+        // Remove matrix/unwanted fields explicitly requested
+        const SKIP_WORDS = ['covariance', 'flicker'];
+        raw = raw.filter(f => !SKIP_WORDS.some(w => f.toLowerCase().includes(w)));
+
         // Keep only leaf fields (no other field is a child of this one)
         fields = raw.filter(f => !raw.some(other => other !== f && other.startsWith(f + '.')));
       } catch (err) {
@@ -1250,10 +1302,16 @@ class DashboardManager {
   toggleRosMode() {
     const isWifi = document.querySelector('input[name="ros-mode"]:checked').value === 'wifi';
     const fields = document.getElementById('ros-wifi-fields');
+    const masterUri = document.getElementById('ros-master-uri');
+
     if (isWifi) {
       fields.classList.remove('hidden');
+      if (masterUri.value === 'http://localhost:11311') {
+         masterUri.value = 'http://10.42.0.1:11311';
+      }
     } else {
       fields.classList.add('hidden');
+      masterUri.value = 'http://localhost:11311';
     }
   }
 

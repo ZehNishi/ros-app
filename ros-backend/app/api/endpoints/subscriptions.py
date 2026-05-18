@@ -417,6 +417,111 @@ async def stream_topic(
         },
     )
 
+# ---------------------------------------------------------------------------
+# GET /stream (Global stream for all active topics)
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/stream",
+    summary="Stream SSE de mensagens de todos os tópicos ROS subscritos",
+    response_class=StreamingResponse,
+)
+async def stream_all_topics(
+    request: Request,
+    interval: float = Query(
+        default=_SSE_DEFAULT_INTERVAL,
+        ge=_SSE_MIN_INTERVAL,
+        le=_SSE_MAX_INTERVAL,
+        description="Intervalo de polling em segundos.",
+    ),
+):
+    """
+    Abre uma única conexão SSE (Server-Sent Events) e emite novas mensagens de
+    TODOS os tópicos ROS subscritos. Ideal para evitar o limite de conexões do navegador.
+    """
+    logger.info("GET /stream — nova conexão SSE global (interval=%.3fs).", interval)
+
+    return StreamingResponse(
+        _sse_generator_all(request, interval),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control":    "no-cache",
+            "Connection":       "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+async def _sse_generator_all(
+    request: Request,
+    interval: float,
+) -> AsyncGenerator[str, None]:
+    last_ts_map = {}
+    last_data_ts: float = asyncio.get_event_loop().time()
+    loop = asyncio.get_event_loop()
+    sent_count = 0
+
+    logger.debug("_sse_generator_all: iniciado.")
+
+    try:
+        while True:
+            if await request.is_disconnected():
+                logger.info("_sse_generator_all: cliente desconectou após %d evento(s).", sent_count)
+                break
+
+            active_topics = [s["topic_name"] for s in topic_manager.list_subscribed()]
+            
+            def process_all_topics():
+                results = []
+                for topic in active_topics:
+                    if topic not in last_ts_map:
+                        last_ts_map[topic] = -1.0
+                    try:
+                        history = topic_manager.get_history(topic)
+                    except TopicNotSubscribedError:
+                        continue
+                    except Exception as exc:
+                        logger.warning("_sse_generator_all: erro ao ler buffer de '%s': %s", topic, exc)
+                        continue
+
+                    last_ts = last_ts_map[topic]
+                    for entry in history:
+                        if entry["timestamp"] > last_ts:
+                            try:
+                                msg_dict = convert_ros_message(entry["msg"], include_meta=True)
+                            except Exception as exc:
+                                logger.warning("_sse_generator_all: erro converte msg '%s': %s", topic, exc)
+                                msg_dict = {"_error": str(exc)}
+                            results.append({
+                                "topic": topic,
+                                "timestamp": entry["timestamp"],
+                                "data": msg_dict
+                            })
+                            last_ts_map[topic] = entry["timestamp"]
+                return results
+
+            # Run the entire extraction and conversion for all topics in one thread task
+            new_events = await loop.run_in_executor(None, process_all_topics)
+
+            for payload in new_events:
+                yield _sse_event("message", payload)
+                sent_count += 1
+
+            if not new_events:
+                idle = loop.time() - last_data_ts
+                if idle >= _SSE_KEEPALIVE_SECS:
+                    yield ": keepalive\n\n"
+                    last_data_ts = loop.time()
+            else:
+                last_data_ts = loop.time()
+
+            await asyncio.sleep(interval)
+
+    except GeneratorExit:
+        logger.info("_sse_generator_all: GeneratorExit — cliente encerrou conexão.")
+    except Exception as exc:
+        logger.error("_sse_generator_all: erro inesperado: %s", exc)
+    finally:
+        logger.info("_sse_generator_all: stream encerrado. Total: %d.", sent_count)
 
 async def _sse_generator(
     request: Request,

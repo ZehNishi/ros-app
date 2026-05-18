@@ -136,9 +136,12 @@ def connect_ros(req: ConnectRequest):
         settings.ROS_MASTER_URI = req.master_uri
         if req.ros_ip:
             os.environ["ROS_IP"] = req.ros_ip
+        if "ROS_HOSTNAME" in os.environ:
+            del os.environ["ROS_HOSTNAME"]
     else:
         os.environ["ROS_MASTER_URI"] = "http://localhost:11311"
         settings.ROS_MASTER_URI = "http://localhost:11311"
+        os.environ["ROS_HOSTNAME"] = "localhost"
         if "ROS_IP" in os.environ:
             del os.environ["ROS_IP"]
 

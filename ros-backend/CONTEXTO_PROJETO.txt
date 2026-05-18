@@ -12,9 +12,9 @@ INSTRUÇÕES PARA O MODELO QUE LER ESTE ARQUIVO:
   - Ajudar a implementar novas funcionalidades seguindo os padrões já
     estabelecidos no projeto.
   - Identificar bugs e propor correções consistentes com o estilo do código.
-  - Sugerir melhorias sem quebrar a compatibilidade com Python 3.8.
-  - Sempre considerar que o projeto roda localmente (fora do Replit), em uma
-    máquina com ROS Noetic instalado.
+  - Sempre considerar que o projeto roda fora do Replit, seja localmente
+    (mesma máquina do ROS) ou em um servidor/nuvem dedicado, devidamente
+    configurado para se comunicar com a rede ROS.
   Ao responder, cite os arquivos e funções relevantes pelo caminho exato
   (ex: app/ros/topic_manager.py). Use português, pois o usuário se comunica
   em português.
@@ -110,8 +110,9 @@ Objetivo:
   rospy instalado no cliente.
 
 Onde roda:
-  Localmente, na mesma máquina onde o ROS Noetic está instalado. Não é
-  implantado em nuvem nem no Replit em produção.
+  Localmente na mesma máquina onde o ROS Noetic está instalado, ou em um
+  servidor (físico, VPS ou nuvem) que esteja conectado à mesma rede do ROS
+  (via LAN, VPN, ZeroTier, etc). Não deve ser executado no Replit em produção.
 
 Pré-requisitos de ambiente:
   - Ubuntu 20.04 (recomendado para ROS Noetic)
@@ -735,6 +736,60 @@ SEÇÃO 13 — PONTOS DE ATENÇÃO PARA FUTURAS IMPLEMENTAÇÕES
 
 10. Os tópicos ROS na URL devem ser URL-encoded (/ vira %2F) quando usados
     como path parameters. Ex: /chatter → %2Fchatter.
+
+================================================================================
+SEÇÃO 14 — IMPLANTAÇÃO EM SERVIDOR (DEPLOYMENT)
+================================================================================
+
+Este projeto foi projetado inicialmente para rodar localmente, mas a arquitetura
+permite sua implantação em um servidor remoto, contanto que algumas
+configurações de rede e ambiente sejam ajustadas para permitir a comunicação 
+bidirecional com o ecossistema ROS.
+
+14.1 — Comunicação de Rede com ROS
+-------------------------------------
+  Para que a API no servidor se comunique com o robô (onde roda o roscore), é 
+  CRÍTICO que haja conectividade de rede sem bloqueios de portas dinâmicas.
+  - ROS_MASTER_URI: Deve apontar para o IP/hostname do master (ex: http://IP_DO_ROBO:11311).
+  - ROS_IP ou ROS_HOSTNAME: Deve OBRIGATORIAMENTE ser configurado no servidor 
+    com o IP da interface de rede do próprio servidor que alcança o robô. 
+    Isso garante que os nós do robô consigam enviar os dados dos tópicos 
+    de volta para a API (subscriber).
+  - Rede VPN / LAN: É fortemente recomendado usar uma VPN (como WireGuard,
+    ZeroTier, Tailscale) ou estar na mesma rede local segura. O tráfego ROS 
+    não possui autenticação/criptografia nativa.
+
+14.2 — Execução em Produção
+------------------------------
+  Em um ambiente de servidor, recomenda-se criar um serviço Systemd para gerenciar 
+  o processo automaticamente (auto-restart em caso de falhas e boot).
+  Exemplo de execução em produção:
+    /caminho/do/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+  
+  Nota sobre Workers: Como a comunicação com ROS via `rospy` depende fortemente de estado 
+  global e criação de nós, a execução com múltiplos workers (`--workers N`) pode causar 
+  conflitos de nomes de nó ou comportamento inesperado no streaming. Portanto, recomenda-se
+  manter a execução com 1 worker usando puramente o Uvicorn, aproveitando o design 
+  assíncrono do FastAPI para concorrência HTTP.
+
+14.3 — Proxy Reverso (Nginx / Traefik)
+-----------------------------------------
+  Para expor o dashboard em porta web padrão (80/443), utilize um proxy reverso
+  (ex: Nginx). É FUNDAMENTAL configurar o proxy para não armazenar em buffer 
+  (no buffering) as rotas de streaming (SSE).
+  No Nginx, para a rota /api/v1/topic/.../stream, adicione:
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 86400s;
+  Caso contrário, o proxy segurará os pacotes em tempo real e o dashboard parecerá travado.
+
+14.4 — Dockerização (Opcional)
+---------------------------------
+  Caso opte por Docker, a imagem base deve conter a instalação do ROS (ex: 
+  `ros:noetic-ros-core-focal`) para prover a biblioteca `rospy`.
+  O container geralmente precisa ser executado com `--network host` para facilitar
+  a alocação de portas dinâmicas do ROS, ou todas as portas necessárias devem ser 
+  cuidadosamente mapeadas/roteadas.
 
 ================================================================================
 FIM DO DOCUMENTO
